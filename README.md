@@ -46,7 +46,7 @@ CS5800 最近有没有新公告？
 
 ### 🔌 Canvas MCP
 
-安装脚本会把 `canvas_mcp.py` 注册成用户级 Claude Code MCP server。
+安装脚本会把 Canvas MCP 注册成用户级 Claude Code MCP server：源码版使用 `canvas_mcp.py`，打包版使用随程序附带的可执行文件。
 
 因此不只是在 NEU Helper 里，在任意目录打开 Claude Code 也可以直接问课程相关问题：
 
@@ -110,15 +110,34 @@ NEU Helper 还有一套独立的邮箱页面：
 
 **[Download latest release](https://github.com/haoawake/neu-helper/releases/latest)**
 
-当前 `v1.0.0` 提供：
+当前 `v1.0.1` 提供：
 
 ```text
 NEU-Helper-win-x64.zip
 ```
 
-### 1. 解压
+### 0. 如果要用 AI，先安装并登录 Claude Code
 
-把 zip 解压到一个长期保留的位置。程序会在自身目录旁写入 `data/`，里面保存本地缓存、对话、简报和设置。
+Canvas 仪表盘、邮箱列表和备忘录不需要 Claude Code；**每日简报、AI 对话、邮件 AI 和 Canvas MCP 需要**。个人用户需要可使用 Claude Code 的订阅（如 Pro / Max）或 API 计费账户，详见 [Claude Code 官方文档](https://code.claude.com/docs/en/overview)。
+
+在 PowerShell 中安装：
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+```
+
+关闭并重新打开 PowerShell，然后完成登录并确认它真的能回答：
+
+```powershell
+claude --version
+claude
+```
+
+如果暂时不需要 AI，可以跳过这一步；以后装好 Claude Code 后，**重新运行 `setup.ps1` 即可**，已经保存的 Canvas token 会自动复用。
+
+### 1. 下载并解压
+
+从上面的 Release 页面下载 `NEU-Helper-win-x64.zip`，解压到一个长期保留的位置。程序会在自身目录旁写入 `data/`，里面保存本地缓存、对话、简报和设置。
 
 ### 2. 创建 Canvas Access Token
 
@@ -144,19 +163,45 @@ Account → Settings → New Access Token
 powershell -ExecutionPolicy Bypass -File setup.ps1 -Token "14523~xxxxxxxxxxxxxxxx"
 ```
 
-安装脚本会完成凭据保存、桌面快捷方式、开机启动、Canvas MCP 注册和自检。
+安装脚本会完成凭据保存、桌面快捷方式、开机启动、Canvas MCP 注册和自检。脚本可以安全地重复运行；省略 `-Token` 时会复用已经保存的 token。
 
-### 4. 打开 NEU Helper
+### 4. 修改课程表
+
+安装脚本会在解压目录生成 `CLAUDE.md`。打开它，把示例课程替换成自己的课程。`course_id` 就是 Canvas 课程网址最后的数字：
+
+```text
+https://northeastern.instructure.com/courses/123456
+                                                 ^^^^^^ course_id
+```
+
+### 5. 打开并验收
 
 双击桌面上的 **NEU Helper** 即可。
+
+如果安装了 Claude Code，再运行：
+
+```powershell
+claude mcp list
+```
+
+应该能看到 `canvas`。完整验收清单见后面的[安装成功检查](#安装成功检查)。
 
 ---
 
 ## 从源码运行
 
-需要 **Python 3.9+**。
+需要 **Git** 和 **Python 3.9+**。如果要使用 AI 功能，也要先按上面的步骤安装、登录 Claude Code。
 
 ### Windows
+
+先确认前置命令可用：
+
+```powershell
+git --version
+python --version
+```
+
+缺少时分别安装 [Git for Windows](https://git-scm.com/download/win) 和 [Python 3](https://www.python.org/downloads/windows/)；安装 Python 时勾选 **Add Python to PATH**。
 
 ```powershell
 git clone https://github.com/haoawake/neu-helper.git
@@ -180,6 +225,15 @@ pythonw app.py
 
 ### macOS
 
+先确认前置命令可用：
+
+```bash
+git --version
+python3 --version
+```
+
+如果系统提示缺少开发者工具，运行 `xcode-select --install` 安装 Git；Python 可以从 [python.org](https://www.python.org/downloads/macos/) 安装，或在已有 Homebrew 时运行 `brew install python`。
+
 ```bash
 git clone https://github.com/haoawake/neu-helper.git
 cd neu-helper
@@ -198,10 +252,21 @@ python3 app.py
 目前 Release 没有预构建的 macOS 包，需要在 Mac 上构建：
 
 ```bash
+chmod +x packaging/build_mac.sh
 ./packaging/build_mac.sh
 ```
 
-产物会放在 `dist/`。PyInstaller 的原生依赖与构建机器的平台和架构相关，所以 macOS 包不能在 Windows 上交叉构建。
+构建后还要运行打包版专用的首次设置脚本：
+
+```bash
+"./dist/NEU Helper.app/Contents/MacOS/setup_mac.sh" --token "14523~xxxxxxxxxxxxxxxx"
+open -e "./dist/NEU Helper.app/Contents/MacOS/CLAUDE.md"
+open "./dist/NEU Helper.app"
+```
+
+第一条命令保存 token、注册打包内置的 `canvas-mcp`、创建登录启动项并自检；第二条命令用于把示例课程表改成自己的。设置脚本可以重复运行，省略 `--token` 会复用已经保存的 token。
+
+产物会放在 `dist/`。PyInstaller 的原生依赖与构建机器的平台和架构相关，所以 macOS 包不能在 Windows 上交叉构建。macOS 的真实 GUI 兼容性仍在继续验证，建议构建后先在本机完整走一遍下方验收清单。
 
 ---
 
@@ -216,6 +281,8 @@ NEU Helper 的 **Canvas 仪表盘、邮箱列表和本地备忘录** 不依赖 C
 - `course-files` / `course-sync` skills
 
 NEU Helper **不要求你另外填写 Anthropic API Key**。桌面应用直接调用本机的 `claude` CLI，所以只要 Claude Code 自己已经能正常使用，NEU Helper 就能复用同一套登录状态。
+
+安装 CLI 不等于账号一定有使用资格。个人用户通常需要包含 Claude Code 的 Pro / Max 订阅，也可以使用 API 计费；Team / Enterprise 账户则取决于组织配置。
 
 ### 1. 安装 Claude Code
 
@@ -280,6 +347,13 @@ claude
 运行 NEU Helper 的安装脚本时：
 
 ```powershell
+# Windows Release：在解压目录运行
+powershell -ExecutionPolicy Bypass -File setup.ps1 -Token "14523~xxxxxxxxxxxxxxxx"
+```
+
+或：
+
+```powershell
 # Windows 源码版
 powershell -ExecutionPolicy Bypass -File install.ps1 -Token "14523~xxxxxxxxxxxxxxxx"
 ```
@@ -291,7 +365,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Token "14523~xxxxxxxxxxxxx
 ./install.sh --token "14523~xxxxxxxxxxxxxxxx"
 ```
 
-安装器会检测 `claude` 命令，并把仓库里的 `canvas_mcp.py` 注册为名为 `canvas` 的 **user-scope MCP server**。
+安装器会检测 `claude` 命令，并注册名为 `canvas` 的 **user-scope MCP server**。源码版使用 `canvas_mcp.py`，Windows Release 使用包内的 `canvas-mcp.exe`，macOS 打包版使用包内的 `canvas-mcp`。
 
 它做的事情本质上相当于：
 
@@ -344,25 +418,55 @@ claude
 
 最常见的情况是安装 NEU Helper 时 `claude` 还不在 PATH，所以安装器只能跳过 MCP 注册。
 
-先确认：
+最简单的修复方法是：先确认 Claude Code 已安装并登录，然后**重新运行对应的安装脚本**。安装器会复用已保存的 token。
 
-```bash
+```powershell
+# Windows Release
 claude --version
-python --version
+powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-Windows 上如果 `python` 可用，在 **neu-helper 项目目录**运行：
+```powershell
+# Windows 源码版
+claude --version
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+```bash
+# macOS 源码版
+claude --version
+./install.sh
+```
+
+如果需要完全手动注册，请按安装形态选择命令，不要混用。
+
+**Windows Release（在解压目录运行，不需要 Python）：**
+
+```powershell
+claude mcp remove canvas -s user
+claude mcp add canvas -s user -- "$PWD\canvas-mcp.exe"
+```
+
+**Windows 源码版（在仓库目录运行）：**
 
 ```powershell
 claude mcp remove canvas -s user
 claude mcp add canvas -s user -- python "$PWD\canvas_mcp.py"
 ```
 
-macOS：
+**macOS 源码版（在仓库目录运行）：**
 
 ```bash
 claude mcp remove canvas -s user
 claude mcp add canvas -s user -- python3 "$(pwd)/canvas_mcp.py"
+```
+
+**macOS 打包版：**
+
+```bash
+APP="$(pwd)/dist/NEU Helper.app"
+claude mcp remove canvas -s user
+claude mcp add canvas -s user -- "$APP/Contents/MacOS/canvas-mcp"
 ```
 
 然后重新检查：
@@ -420,6 +524,21 @@ CLAUDE.md
 
 ---
 
+## 安装成功检查
+
+安装脚本显示 `Done` 代表基础文件和本地自检完成；它**不能替你确认 Claude 账号已经登录且有使用权限**。按下面顺序测一遍，前五项都通过才算核心功能完整安装：
+
+- **Canvas：** 打开 NEU Helper，能看到自己的真实课程和近期作业。
+- **Claude：** 在终端运行 `claude`，普通问题能得到回答。
+- **MCP：** `claude mcp list` 能看到 `canvas`；进入 Claude 后执行 `/mcp` 显示已连接。
+- **端到端：** 在 Claude 和 NEU Helper 对话栏分别问“我 Canvas 里有哪些课程？”，都能返回真实课程。
+- **课程配置：** 回答能正确理解你在 `CLAUDE.md` 里设置的课程简称。
+- **邮箱（可选）：** 在应用设置中添加 IMAP 账户，刷新后能看到邮件；QQ / 163 / Gmail 请使用授权码或应用专用密码，不要填写网页登录密码。
+
+如果前四项中某项失败，按上面的两层排障判断：Claude 本身、MCP 注册、Canvas token、`CLAUDE.md` 分开查，通常几分钟就能定位。
+
+---
+
 ## 常用操作
 
 ### 桌面应用
@@ -436,6 +555,19 @@ CLAUDE.md
 ### 查看本地课件
 
 同步后的内容保存在 `data/` 下的课程目录中，并生成适合全文检索的文本副本。
+
+### 接入邮箱
+
+在 NEU Helper 中进入 **Settings → mailbox → 添加账号**。QQ、163、Gmail 等邮箱应填写 **IMAP 授权码 / 应用专用密码**，不要填写网页登录密码；服务器地址只有在“其他邮箱”中才需要手动填写。
+
+NEU 的 Microsoft 365 / Outlook 邮箱目前不适合直接使用密码式 IMAP。推荐先把学校邮件转发到已经接入 NEU Helper 的邮箱：
+
+1. 打开 Outlook 网页版，进入 **Settings → Mail → Forwarding**。
+2. 开启转发，填写你的 QQ / Gmail / 其他目标邮箱。
+3. 建议勾选在 Outlook 中保留副本，然后保存。
+4. 给学校邮箱发一封测试邮件，确认目标邮箱收到后，再回到 NEU Helper 刷新。
+
+如果学校管理员禁用了自动转发，Outlook 会拒绝保存或邮件不会送达；这种情况不是 NEU Helper 的 token 问题，需要改用学校允许的转发方式或等待项目加入 Microsoft OAuth。
 
 ---
 
@@ -547,7 +679,7 @@ python selfcheck.py
 
 用于检查配置、平台逻辑和一批不需要真实 GUI 交互的行为。
 
-Windows `v1.0.0` 打包版已经进行过实际运行验证，包括窗口、悬浮球、本地后端、MCP 和安装流程。
+Windows `v1.0.1` 打包版已经进行过实际运行验证，包括窗口、悬浮球、本地后端、MCP 和安装流程。`v1.0.1` 修复了早期打包版从浏览器下载并解压后无法启动的问题。
 
 macOS 目前主要完成代码层和逻辑自检，真实 AppKit 窗口层级、文字渲染和交互手感仍需要在不同 Mac 设备上继续验证。
 

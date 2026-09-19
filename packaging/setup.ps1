@@ -42,6 +42,10 @@ if (-not (Test-Path $exe)) {
     Fail "NEU Helper.exe is not next to this script. Unzip the whole folder first."
     exit 1
 }
+if (-not (Test-Path $mcpExe)) {
+    Fail "canvas-mcp.exe is not next to this script. Re-extract the whole release zip."
+    exit 1
+}
 
 # ---------------------------------------------------------------- 0. unblock
 Step 0 "Clearing the download tag"
@@ -89,6 +93,7 @@ else { Warn "token written, but locking down its permissions failed" }
 
 # ---------------------------------------------------------------- 2. MCP
 Step 2 "Registering the canvas MCP server with Claude Code"
+$mcpRegistered = $false
 $claude = (Get-Command claude -ErrorAction SilentlyContinue).Source
 if (-not $claude) {
     foreach ($c in @("$env:USERPROFILE\.local\bin\claude.exe",
@@ -97,14 +102,26 @@ if (-not $claude) {
     }
 }
 if (-not $claude) {
-    Warn "claude CLI not found. The dashboard and mailbox still work, but the"
-    Warn "daily briefing and the chat need it: https://claude.com/claude-code"
+    Warn "claude CLI not found. Canvas, mailbox, and memos will still work."
+    Warn "AI chat, briefings, mail AI, and Canvas MCP are NOT configured yet."
+    Warn "Install and log in to Claude Code, then run this setup.ps1 again."
+    Warn "The saved Canvas token will be reused; do not pass -Token again."
 } else {
+    # PowerShell 5.1 can promote a native program's stderr to a terminating
+    # ErrorRecord under Stop. Judge these commands by their exit codes instead.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $claude mcp remove canvas -s user 2>&1 | Out-Null
     # Point at the bundled exe -- this build has no Python to run canvas_mcp.py
     & $claude mcp add canvas -s user -- $mcpExe 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Ok "MCP server 'canvas' -> canvas-mcp.exe" }
-    else { Warn "claude mcp add failed; register it by hand if you want MCP" }
+    $mcpAddCode = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($mcpAddCode -eq 0) {
+        $mcpRegistered = $true
+        Ok "MCP server 'canvas' -> canvas-mcp.exe"
+    } else {
+        Warn "claude mcp add failed. After fixing Claude Code, run setup.ps1 again."
+    }
 }
 
 # ---------------------------------------------------------------- 3. config
@@ -194,6 +211,14 @@ if ($reply2 -match '"result"' -and $reply2 -notmatch '"isError":true') {
 
 Write-Host ""
 Write-Host "=== Done ===" -ForegroundColor White
+if ($mcpRegistered) {
+    Write-Host "    AI setup:  Canvas MCP registered. Run 'claude mcp list' to verify it." -ForegroundColor Green
+    Write-Host "               Also run 'claude' once to confirm the account can answer." -ForegroundColor Gray
+} else {
+    Write-Host "    AI setup:  INCOMPLETE. The app works, but AI features are not ready." -ForegroundColor Yellow
+    Write-Host "               Install/login to Claude Code, then re-run:" -ForegroundColor Yellow
+    Write-Host "               powershell -ExecutionPolicy Bypass -File setup.ps1" -ForegroundColor Yellow
+}
 Write-Host "    Start it:  double-click 'NEU Helper' on the Desktop"
 Write-Host "    Mailbox:   set it up inside the app, Settings -> mailbox"
 Write-Host "    Your token lives in $cfgDir, outside this folder."

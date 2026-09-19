@@ -145,15 +145,26 @@ if (Test-Path $wv) {
 
 # ---------------------------------------------------------------- 3. MCP
 Step 3 "Registering the canvas MCP server with Claude Code"
+$mcpRegistered = $false
 $claude = (Get-Command claude -ErrorAction SilentlyContinue).Source
 if (-not $claude) {
-    Warn "claude CLI not on PATH; skipping MCP registration"
+    foreach ($c in @("$env:USERPROFILE\.local\bin\claude.exe",
+                     "$env:LOCALAPPDATA\Programs\claude\claude.exe")) {
+        if (Test-Path $c) { $claude = $c; break }
+    }
+}
+if (-not $claude) {
+    Warn "claude CLI not found; AI features and Canvas MCP are not configured"
+    Warn "install/login to Claude Code, then run install.ps1 again (token is reused)"
 } else {
     $mcpScript = Join-Path $proj "canvas_mcp.py"
     # Clear any earlier registration; a missing one is not an error here.
     Native $claude @("mcp", "remove", "canvas", "-s", "user") | Out-Null
     $add = Native $claude @("mcp", "add", "canvas", "-s", "user", "--", $py, $mcpScript)
-    if ($add.Code -eq 0) { Ok "MCP server 'canvas' registered at user scope (all projects)" }
+    if ($add.Code -eq 0) {
+        $mcpRegistered = $true
+        Ok "MCP server 'canvas' registered at user scope (all projects)"
+    }
     else { Fail "claude mcp add failed: $($add.Out)" }
 }
 
@@ -331,10 +342,15 @@ Pop-Location
 Write-Host ""
 Write-Host "=== Done ===" -ForegroundColor White
 Write-Host ""
+if ($mcpRegistered) {
+    Write-Host "  AI setup:   Canvas MCP registered; run 'claude mcp list' to verify." -ForegroundColor Green
+    Write-Host "  Anywhere:   run 'claude' and ask about your courses." -ForegroundColor Gray
+} else {
+    Write-Host "  AI setup:   INCOMPLETE; install/login to Claude Code, then re-run install.ps1." -ForegroundColor Yellow
+}
 Write-Host "  Next boot:  the NEU Helper window opens by itself." -ForegroundColor Gray
 Write-Host "  Try it now: python app.py          (the desktop app)" -ForegroundColor Gray
 Write-Host "  Terminal:   .\start-canvas-helper.cmd   (text fallback)" -ForegroundColor Gray
-Write-Host "  Anywhere:   run 'claude' and just ask about your courses." -ForegroundColor Gray
 Write-Host "  Remove:     .\uninstall.ps1" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  NOTE: already-running Claude Code sessions will not see the new" -ForegroundColor Yellow
