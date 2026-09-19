@@ -1373,7 +1373,9 @@ function mailCard(m, i) {
   const files = m.files || [];
   if (files.length) row.appendChild(renderMailFiles(files));
 
-  // ⑤..n 链接,一行一条
+  // ⑤..n 链接,一行一条。**只显示 AI 挑中的**(它读过正文,知道哪条
+  //    是报名表单、哪条是退订)。一条都没挑中时也还会有一行"另外 N 条",
+  //    点进去看全文 —— 判错了不能让链接彻底消失。
   const links = m.links || [];
   if (links.length) row.appendChild(renderMailLinks(links, m));
 
@@ -1568,13 +1570,38 @@ function linkLabel(l) {
   }
 }
 
+/* AI 过目时挑出来的那几条链接。
+
+   返回 null 表示"这封信还没有挑选结果"(这一版之前过目的,或者还没过目)
+   —— 调用方据此退回老行为,而不是显示成"一条都不值得点"。 */
+function pickedLinks(m) {
+  const r = m.rank;
+  if (!r || !Array.isArray(r.links)) return null;
+  const all = m.links || [];
+  // n 是 1 起的序号,对应 mailai.links_of 给模型看的那份清单
+  return r.links
+    .map((p) => (all[p.n - 1] ? { ...all[p.n - 1], ai: p.label } : null))
+    .filter(Boolean);
+}
+
 function renderMailLinks(links, m, all) {
   const box = el('div', 'mail-linklist');
-  const show = all ? links : links.slice(0, 6);
+  let show;
+  let rest = 0;
+  const picked = all ? null : pickedLinks(m);
+  if (picked) {
+    // AI 挑过了:只显示它挑中的,其余收进下面那一行
+    show = picked;
+    rest = links.length - picked.length;
+  } else {
+    show = all ? links : links.slice(0, 6);
+    rest = links.length - show.length;
+  }
   show.forEach((l) => {
     const line = el('div', 'mail-linkrow');
     line.appendChild(el('span', 'll-icon', '🔗'));
-    line.appendChild(el('span', 'll-label', linkLabel(l)));
+    // AI 给的标签优先 —— 它读过正文,比按域名猜准
+    line.appendChild(el('span', 'll-label', l.ai || linkLabel(l)));
     const b = el('button', 'll-url');
     b.type = 'button';
     // 地址本身也露出来(去掉协议头,短一点),不然点之前不知道要去哪儿
@@ -1584,9 +1611,11 @@ function renderMailLinks(links, m, all) {
     line.appendChild(b);
     box.appendChild(line);
   });
-  if (links.length > show.length) {
-    const more = el('button', 'mail-linkmore',
-      `还有 ${links.length - show.length} 条链接`);
+  if (rest > 0) {
+    // 措辞分两种:AI 筛过的说"另外 N 条",没筛过的说"还有 N 条" ——
+    // 前者是"我替你滤掉了",后者是"这里只是放不下"
+    const more = el('button', 'mail-linkmore' + (picked ? ' is-filtered' : ''),
+      picked ? `另外 ${rest} 条链接(AI 认为用不上)` : `还有 ${rest} 条链接`);
     more.type = 'button';
     more.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -2486,6 +2515,7 @@ function wireMailPrefs() {
   });
   $('btnMailAnalyze').addEventListener('click', () => runAnalyze(false));
   $('btnMailRedo').addEventListener('click', () => runAnalyze(true));
+  $('btnMailRelink').addEventListener('click', () => runRelink());
 
   $('btnTagAdd').addEventListener('click', addTag);
   $('btnGroupAdd').addEventListener('click', addGroup);
@@ -3756,6 +3786,25 @@ async function addTag() {
 }
 
 /* ── 催一轮过目 ── */
+
+/* 只补链接挑选。**和「全部重判」分开**:那个会把标签、级别、摘要一起
+   重付一次钱并推翻,而这里要补的只是"哪几条链接值得点"。 */
+async function runRelink() {
+  if (!window.confirm(
+    '给「带链接但还没挑过」的邮件补一次链接挑选。\n'
+    + '这会调一次模型,要花钱(通常几毛)。标签和摘要不受影响。\n\n继续吗?')) return;
+  $('aiState').textContent = '正在重挑链接…';
+  try {
+    const r = await apiPost('/api/mail/analyze', { relink: true });
+    if (!r.dropped) {
+      $('aiState').textContent = '没有需要补的 —— 带链接的信都挑过了';
+      return;
+    }
+    renderAiState(r.ai);
+  } catch (e) {
+    $('aiState').textContent = '没跑起来:' + ((e && e.message) || e);
+  }
+}
 
 async function runAnalyze(redo) {
   if (redo && !window.confirm(

@@ -152,6 +152,42 @@ def _facts_block(facts) -> list[str]:
     return rows
 
 
+# 一封信最多把这么多条链接交给模型看。再多也没意义 —— 值得点的从来不会
+# 有十几条,而每条都要花 token。
+# (mailparts 已经把有锚文本的链接排在前面,所以取前几条不是随机取。)
+LINKS_PER_MAIL = 10
+LINK_URL_CHARS = 78
+# 模型最多能挑几条。和 prompt 里那句"最多 3 条"要一致
+MAX_PICKS = 3
+
+
+def _short_url(u: str) -> str:
+    """喂给模型的链接要多短。
+
+    **去掉查询串**。实测一封 LinkedIn/Amazon 的信里 20 条链接能占掉 prompt 的
+    三分之二,而那些长度几乎全是跟踪参数 —— 判断"这条值不值得点"靠的是域名
+    和路径,不是 `?trk=eml-xxx&midToken=yyy`。
+
+    去掉之后两条链接可能看起来一样(`/view?id=1` 和 `/view?id=2`),但不要紧:
+    模型挑的是**序号**,不是 URL,真正打开的仍然是原始那条。
+    """
+    u = (u or "").split("#", 1)[0]
+    head, sep, _query = u.partition("?")
+    if len(head) <= LINK_URL_CHARS:
+        # 短链接就把查询串留一点,有时候 ?type=form 这种本身是信息
+        return u[:LINK_URL_CHARS] if not sep else head + "?…"
+    return head[:LINK_URL_CHARS] + "…"
+
+
+def links_of(m: dict) -> list[dict]:
+    """一封信里待判的链接(截到 LINKS_PER_MAIL 条)。
+
+    单独提出来是因为**打 prompt 和解析结果必须看到同一个清单** ——
+    序号对不上的话,模型挑的第 2 条会变成另一条链接。
+    """
+    return [l for l in (m.get("links") or []) if l.get("url")][:LINKS_PER_MAIL]
+
+
 def build_prompt(msgs: list[dict], facts, tags) -> str:
     catalog = [t for t in (tags or DEFAULT_TAGS) if str(t).strip()]
     p = ["给下面每封邮件打标签、评重要程度、写一句话摘要。", ""]
@@ -178,8 +214,22 @@ def build_prompt(msgs: list[dict], facts, tags) -> str:
         "每封**至少一个标签**,最多三个。summary 一句话说清「这封信要我干什么」,"
         "不要复述主题。why 一句话说清为什么是这个 level。",
         "",
-        "只输出一个 JSON 数组,每封一项,i 是下面的序号:",
-        '[{"i":1,"tags":["学业"],"level":2,"summary":"…","why":"…"}]',
+        # 链接:这是卡片上最容易被垃圾淹掉的一段。一封营销信十几条链接,
+        # 真正要点的可能只有一条。正则猜不出这个,但读过正文的模型能。
+        "有的邮件下面会列出它里面的链接。**挑出我真的可能会点的**,",
+        "按下面的规矩:",
+        "  · 一封最多挑 3 条;**没有值得点的就给空数组**,不要硬凑",
+        "  · 退订、隐私政策、服务条款、「在浏览器中查看」、社交媒体图标、",
+        "    纯跟踪跳转 —— 一条都不要挑",
+        "  · 同一个目标出现多次,只挑一条",
+        "  · label 用 2~6 个字说清**点进去是干什么**(「报名表单」「会议链接」",
+        "    「查看成绩」),不要写域名、不要照抄链接文字",
+        "  · 判断标准是上面「我的情况」—— 对我有用才算有用",
+        "",
+        "只输出一个 JSON 数组,每封一项,i 是下面的序号;links 里的 n 是",
+        "那封信链接清单里的序号:",
+        '[{"i":1,"tags":["学业"],"level":2,"summary":"…","why":"…",'
+        '"links":[{"n":2,"label":"报名表单"}]}]',
         "",
         "邮件:",
     ]
@@ -189,11 +239,23 @@ def build_prompt(msgs: list[dict], facts, tags) -> str:
         p.append(f"   主题 {m.get('subject')}")
         if snip.strip():
             p.append(f"   正文 {snip[:300]}")
+        # 链接清单。**截断是有意的**:一封信可能有几十条链接,全塞进去
+        # 会把 prompt 撑爆,而判断"值不值得点"靠的是链接文字和路径,
+        # 不是那一长串跟踪参数。
+        for n, l in enumerate(links_of(m), 1):
+            txt = (l.get("text") or "").strip().replace("\n", " ")
+            url = _short_url(l.get("url") or "")
+            p.append(f"   链接{n} {txt[:40] + ' ' if txt else ''}{url}")
     return "\n".join(p)
 
 
-def parse_result(raw: str, n: int) -> list[dict]:
-    """把模型那一坨变成 n 条结果。缺的、乱的一律丢掉,不硬凑。"""
+def parse_result(raw: str, n: int, link_counts: list[int] | None = None) -> list[dict]:
+    """把模型那一坨变成 n 条结果。缺的、乱的一律丢掉,不硬凑。
+
+    link_counts 是每封信实际有几条链接(和 links_of 给出的那份对齐)——
+    用来校验模型挑的序号。**没有它就不能收 links**:模型偶尔会编一个
+    不存在的序号,照单全收的话卡片上会指向另一条链接,那比不显示更糟。
+    """
     s = (raw or "").strip()
     data = None
     try:
@@ -225,6 +287,22 @@ def parse_result(raw: str, n: int) -> list[dict]:
             lv = int(item.get("level"))
         except (TypeError, ValueError):
             lv = 1
+        # 挑中的链接:序号必须落在这封信真实的链接范围里,否则丢掉
+        have = (link_counts[i - 1] if link_counts and i - 1 < len(link_counts) else 0)
+        picks, seen = [], set()
+        for p in (item.get("links") or []):
+            if not isinstance(p, dict):
+                continue
+            try:
+                k = int(p.get("n"))
+            except (TypeError, ValueError):
+                continue
+            if not 1 <= k <= have or k in seen:
+                continue
+            seen.add(k)
+            picks.append({"n": k, "label": str(p.get("label") or "").strip()[:12]})
+            if len(picks) >= MAX_PICKS:
+                break
         out.append({
             "i": i,
             # 一封至少一个标签 —— 模型没给就兜个"未分类",不能留空
@@ -232,6 +310,10 @@ def parse_result(raw: str, n: int) -> list[dict]:
             "level": max(0, min(3, lv)),
             "summary": str(item.get("summary") or "")[:200],
             "why": str(item.get("why") or "")[:200],
+            "links": picks,
+            # 这封信当时**一共**有几条链接。前端要靠它区分两种情况:
+            # "这封没链接" 和 "有链接但模型一条都没看上"
+            "nlinks": have,
         })
     return out
 
@@ -340,7 +422,8 @@ class Analyzer:
         if env.get("is_error"):
             raise RuntimeError(str(env.get("result"))[:200])
 
-        got = parse_result(env.get("result", ""), len(batch))
+        got = parse_result(env.get("result", ""), len(batch),
+                           [len(links_of(m)) for m in batch])
         if not got:
             raise RuntimeError("模型没给出能解析的 JSON")
         model = self.model_getter() or "sonnet"
@@ -349,6 +432,7 @@ class Analyzer:
             m = batch[item["i"] - 1]
             out[m["id"]] = {"tags": item["tags"], "level": item["level"],
                             "summary": item["summary"], "why": item["why"],
+                            "links": item["links"], "nlinks": item["nlinks"],
                             "at": _now(), "model": model}
             fresh_tags.update(item["tags"])
         self.tags.put_many(out)
@@ -373,15 +457,32 @@ def rank_of(mid: str, tags: TagStore, flags: dict,
       3. 还没过目 —— 给个"待分析",**不要**假装已经判过了
     """
     if flags.get("star") and not flags.get("done"):
-        return {"level": 3, "label": "盯", "icon": "◎",
-                "why": "你标成了重点,还没标完成", "tags": [], "pending": False}
+        # 级别由"你标了重点"说了算 —— 但**别把 AI 过目的结论一起扔掉**。
+        # 标签、摘要、挑中的链接是这封信"是什么"的描述,和"多要紧"是两回事;
+        # 一起扔掉的话,你最在意的那几封反而变成卡片上信息最少的。
+        d = {"level": 3, "label": "盯", "icon": "◎",
+             "why": "你标成了重点,还没标完成", "tags": [], "pending": False}
+        a = tags.get(mid)
+        if a:
+            d["tags"] = a.get("tags") or []
+            d["summary"] = a.get("summary") or ""
+            if "links" in a:
+                d["links"] = a.get("links") or []
+                d["nlinks"] = int(a.get("nlinks") or 0)
+        return d
     a = tags.get(mid)
     if a:
         lv = int(a.get("level", 1))
-        return {"level": lv, "label": LEVELS.get(lv, "普通"),
-                "icon": ICONS.get(lv, "·"), "why": a.get("why") or "",
-                "summary": a.get("summary") or "",
-                "tags": a.get("tags") or [], "pending": False}
+        d = {"level": lv, "label": LEVELS.get(lv, "普通"),
+             "icon": ICONS.get(lv, "·"), "why": a.get("why") or "",
+             "summary": a.get("summary") or "",
+             "tags": a.get("tags") or [], "pending": False}
+        # 挑中的链接。**只有这一版之后过目的信才有** —— 老结论里没有这个键,
+        # 前端据此退回"显示前几条"的老行为,而不是显示成"一条都不值得点"。
+        if "links" in a:
+            d["links"] = a.get("links") or []
+            d["nlinks"] = int(a.get("nlinks") or 0)
+        return d
     if fallback:
         d = dict(fallback)
         d.setdefault("tags", [])

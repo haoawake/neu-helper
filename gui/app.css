@@ -2206,3 +2206,13 @@ body.is-morphing .layout-mail { animation: none; }
 
 /* ── 打字机光标的落点:流式时那个方块跟着最后一行走,不要换行时跳 ── */
 .caret::after { display: inline-block; vertical-align: -1px; }
+
+
+/* AI 筛掉的那些链接。刻意比普通的"还有 N 条"更弱 —— 它传达的是
+   "这些你不用管",而不是"这里还有内容没展开"。但**必须点得动**:
+   AI 判错的时候,用户得有路把链接找回来。 */
+.mail-linkmore.is-filtered {
+  opacity: .55;
+  font-size: 11.5px;
+}
+.mail-linkmore.is-filtered:hover { opacity: 1; }

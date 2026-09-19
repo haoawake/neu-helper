@@ -2030,11 +2030,26 @@ def api_mail_backfill():
 
 @app.post("/api/mail/analyze")
 def api_mail_analyze():
-    """手动催一轮过目。redo=1 = 把已有结论全扔了重判(改完个人信息想让它
-    重新看一遍的时候用 —— 这是要花钱的,所以得显式点)。"""
-    redo = bool((request.get_json(silent=True) or {}).get("redo"))
+    """手动催一轮过目。
+
+    redo=1    把已有结论全扔了重判(改完个人信息想让它重新看一遍的时候用)
+    relink=1  只补**链接挑选** —— 带链接、但结论里还没有挑选结果的那些信
+
+    两个都要花钱,所以都得显式点。relink 存在的意义是省钱:加"AI 挑链接"
+    这个功能之前过目的信没有挑选结果,而为了补上它去把标签和摘要也重付
+    一次不划算。
+    """
+    d = request.get_json(silent=True) or {}
+    redo = bool(d.get("redo"))
+    dropped = 0
+    if d.get("relink") and not redo:
+        stale = [m["id"] for m in backend.mail.all(limit=10000)
+                 if (m.get("links") or [])
+                 and backend.mail_ai.has(m["id"])
+                 and "links" not in backend.mail_ai.get(m["id"])]
+        dropped = backend.mail_ai.drop(stale)
     started = backend.analyzer.analyze_now(force_all=redo)
-    return jsonify({"ok": True, "started": started,
+    return jsonify({"ok": True, "started": started, "dropped": dropped,
                     "ai": backend.analyzer.snapshot()})
 
 
