@@ -3,7 +3,8 @@
 #
 #     ./packaging/build_mac.sh
 #
-# Produces  dist/NEU-Helper-mac-<arch>.zip  containing NEU Helper.app.
+# Produces dist/NEU-Helper-mac-<arch>.zip containing NEU Helper.app and its
+# first-run README.
 #
 # There is no way around doing this on a Mac: PyInstaller freezes the
 # interpreter and the native libraries of the machine it runs on, so a macOS
@@ -65,9 +66,67 @@ mkdir -p "$MACOS/.claude"
 cp -R .claude/skills "$MACOS/.claude/skills"
 
 # Unsigned apps get a quarantine flag on download; strip it locally so the
-# freshly built one opens without the right-click dance. The person who
-# downloads the zip still has to do it once -- README.txt says how.
+# freshly built one opens without the right-click dance. A downloaded copy
+# may get the flag again; the README packaged beside the app explains that.
 xattr -cr "$APP" 2>/dev/null || true
+
+say "writing first-run instructions"
+STAGE="dist/NEU Helper macOS"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+ditto "$APP" "$STAGE/NEU Helper.app"
+cat > "$STAGE/README.txt" <<'EOF'
+NEU Helper -- packaged build for macOS (no Python needed)
+
+Before setup
+  AI chat, briefings, mail AI, and Canvas MCP require Claude Code. Install it,
+  log in, and make sure it can answer a normal question:
+
+    curl -fsSL https://claude.ai/install.sh | bash
+    claude --version
+    claude
+
+  Claude Code requires a supported subscription/account or API billing.
+  Canvas, mailbox, and memos can work without it.
+
+First run
+  1. Open Terminal and cd into this extracted folder.
+  2. If macOS blocks the unsigned app, remove its download quarantine:
+
+       xattr -cr "./NEU Helper.app"
+
+  3. Run setup with a Canvas token:
+
+       "./NEU Helper.app/Contents/MacOS/setup_mac.sh" --token "14523~...."
+
+     Get a token at: Canvas -> Account -> Settings -> New Access Token.
+
+  4. Edit the generated course table, then launch:
+
+       open -e "./NEU Helper.app/Contents/MacOS/CLAUDE.md"
+       open "./NEU Helper.app"
+
+Verify the complete setup
+  - NEU Helper shows your real Canvas courses and assignments
+  - `claude` can answer a normal question
+  - `claude mcp list` shows `canvas`
+  - asking Claude "What courses are in my Canvas?" returns real data
+
+If Claude Code was missing during setup
+  Install and log in to Claude Code, then run setup again without --token:
+
+    "./NEU Helper.app/Contents/MacOS/setup_mac.sh"
+
+Manual MCP fallback for THIS packaged build
+  Run from this folder:
+
+    APP="$(pwd)/NEU Helper.app"
+    claude mcp remove canvas -s user
+    claude mcp add canvas -s user -- "$APP/Contents/MacOS/canvas-mcp"
+
+Source and issues:
+  https://github.com/haoawake/neu-helper
+EOF
 
 say "zipping"
 ARCH="$(uname -m)"
@@ -75,7 +134,7 @@ ZIP="dist/NEU-Helper-mac-$ARCH.zip"
 rm -f "$ZIP"
 # ditto, not zip: it preserves the resource forks and the symlinks inside a
 # .app bundle. A plain `zip -r` produces a bundle that will not launch.
-( cd dist && ditto -c -k --sequesterRsrc --keepParent "NEU Helper.app" "$(basename "$ZIP")" )
+( cd dist && ditto -c -k --sequesterRsrc --keepParent "NEU Helper macOS" "$(basename "$ZIP")" )
 
 printf '\n\033[32m  done -> %s  (%s)\033[0m\n' "$ZIP" "$(du -h "$ZIP" | cut -f1)"
 echo

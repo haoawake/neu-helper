@@ -46,6 +46,7 @@ echo "=== NEU Helper setup (packaged build) ==="
 echo "    app: $APP"
 
 [ -x "$EXE" ] || { fail "the app bundle looks incomplete (no executable)"; exit 1; }
+[ -x "$MCP" ] || { fail "the app bundle looks incomplete (no canvas-mcp)"; exit 1; }
 
 # ---------------------------------------------------------------- 1. token
 step 1 "Storing the Canvas token"
@@ -72,20 +73,24 @@ ok "token -> $CFG_FILE (mode $(stat -f '%Lp' "$CFG_FILE"))"
 
 # ---------------------------------------------------------------- 2. MCP
 step 2 "Registering the canvas MCP server with Claude Code"
+MCP_REGISTERED=0
 CLAUDE="$(command -v claude 2>/dev/null || true)"
 for c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
   [ -n "$CLAUDE" ] && break
   [ -x "$c" ] && CLAUDE="$c"
 done
 if [ -z "$CLAUDE" ]; then
-  warn "claude CLI not found. The dashboard and mailbox still work, but the"
-  warn "daily briefing and the chat need it: https://claude.com/claude-code"
+  warn "claude CLI not found. Canvas, mailbox, and memos will still work."
+  warn "AI chat, briefings, mail AI, and Canvas MCP are NOT configured yet."
+  warn "Install and log in to Claude Code, then run this setup_mac.sh again."
+  warn "The saved Canvas token will be reused; omit --token next time."
 else
   "$CLAUDE" mcp remove canvas -s user >/dev/null 2>&1 || true
   if "$CLAUDE" mcp add canvas -s user -- "$MCP" >/dev/null 2>&1; then
+    MCP_REGISTERED=1
     ok "MCP server 'canvas' -> the bundled canvas-mcp"
   else
-    warn "claude mcp add failed; register it by hand if you want MCP"
+    warn "claude mcp add failed. After fixing Claude Code, run setup_mac.sh again."
   fi
 fi
 
@@ -176,6 +181,14 @@ fi
 
 echo
 echo "=== Done ==="
+if [ "$MCP_REGISTERED" -eq 1 ]; then
+  echo "    AI setup:  Canvas MCP registered. Run 'claude mcp list' to verify it."
+  echo "               Also run 'claude' once to confirm the account can answer."
+else
+  echo "    AI setup:  INCOMPLETE. The app works, but AI features are not ready."
+  echo "               Install/login to Claude Code, then re-run:"
+  echo "               \"$HERE/setup_mac.sh\""
+fi
 echo "    Start it:  open \"$APP\""
 echo "    Mailbox:   set it up inside the app, Settings -> mailbox"
 echo "    Your token lives in $CFG_DIR, outside the app bundle."

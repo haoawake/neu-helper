@@ -3,7 +3,8 @@
 
         powershell -ExecutionPolicy Bypass -File packaging\build_win.ps1
 
-    Produces  dist\NEU-Helper-win-x64.zip  -- unzip anywhere, run setup.ps1 once.
+    Produces dist\NEU-Helper-win-x64.zip. For AI features, install and log in
+    to Claude Code before running setup.ps1.
 
     Three things this script does that the spec cannot:
 
@@ -50,16 +51,49 @@ Copy-Item -Recurse (Join-Path $proj ".claude\skills") (Join-Path $out ".claude\s
 $readme = @"
 NEU Helper -- packaged build for Windows (no Python needed)
 
-  1. Unzip this whole folder somewhere you will keep it
+  1. If you want AI chat, briefings, mail AI, or Canvas MCP, install and
+     log in to Claude Code first:
+
+       irm https://claude.ai/install.ps1 | iex
+       claude --version
+       claude
+
+     Claude Code requires a supported subscription/account or API billing.
+     Canvas, mailbox, and memos can work without it.
+
+  2. Unzip this whole folder somewhere you will keep it
      (it writes data\ next to the exe: mail, chats, course files, settings).
 
-  2. Run setup once, with a Canvas access token:
+  3. Run setup once, with a Canvas access token:
 
        powershell -ExecutionPolicy Bypass -File setup.ps1 -Token "14523~...."
 
      Get a token at: Canvas -> Account -> Settings -> New Access Token.
 
-  3. Double-click "NEU Helper" on the Desktop.
+  4. Open CLAUDE.md next to the exe and replace the example course table.
+     The course_id is the number at the end of a Canvas course URL.
+
+  5. Double-click "NEU Helper" on the Desktop.
+
+Verify the complete setup
+  - NEU Helper shows your real Canvas courses and assignments
+  - `claude` can answer a normal question
+  - `claude mcp list` shows `canvas`
+  - asking Claude "What courses are in my Canvas?" returns real data
+
+If Claude Code was missing during setup
+  Install and log in to Claude Code, then run this again:
+
+    powershell -ExecutionPolicy Bypass -File setup.ps1
+
+  Your stored Canvas token is reused; do not pass it again.
+
+Manual MCP fallback for THIS packaged build
+  Run these commands from this folder (no Python needed):
+
+    `$Mcp = (Resolve-Path ".\canvas-mcp.exe").Path
+    claude mcp remove canvas -s user
+    claude mcp add canvas -s user -- "`$Mcp"
 
 Why setup.ps1 and not just the exe
   Windows tags every file that came out of a downloaded zip as "from the
@@ -80,7 +114,7 @@ What setup.ps1 does
 
 Needs separately
   - Claude Code CLI, for the daily briefing and the chat:
-    https://claude.com/claude-code
+    https://code.claude.com/docs/en/overview
     (the dashboard, the mailbox and the memos work without it)
   - WebView2 runtime, which Windows 11 already ships
 

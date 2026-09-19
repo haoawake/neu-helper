@@ -150,16 +150,19 @@ ok "login interpreter recorded: $PROJ/data/python-path.txt"
 
 # ---------------------------------------------------------------- 3. MCP
 step 3 "Registering the canvas MCP server with Claude Code"
+MCP_REGISTERED=0
 CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
 for cand in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
   [ -n "$CLAUDE_BIN" ] && break
   [ -x "$cand" ] && CLAUDE_BIN="$cand"
 done
 if [ -z "$CLAUDE_BIN" ]; then
-  warn "claude CLI not found; skipping MCP registration"
+  warn "claude CLI not found; AI features and Canvas MCP are not configured"
+  warn "install/login to Claude Code, then run install.sh again (token is reused)"
 else
   "$CLAUDE_BIN" mcp remove canvas -s user >/dev/null 2>&1 || true
   if "$CLAUDE_BIN" mcp add canvas -s user -- "$PY_BIN" "$PROJ/canvas_mcp.py" >/dev/null 2>&1; then
+    MCP_REGISTERED=1
     ok "MCP server 'canvas' registered at user scope (all projects)"
   else
     fail "claude mcp add failed"
@@ -329,6 +332,11 @@ print('    OK    dark mode reads as %s' % desktop.system_dark())
 
 echo
 echo "=== done ==="
+if [ "$MCP_REGISTERED" -eq 1 ]; then
+  echo "    AI setup:         Canvas MCP registered; run 'claude mcp list' to verify"
+else
+  echo "    AI setup:         INCOMPLETE; install/login to Claude Code, then re-run install.sh"
+fi
 echo "    start it now:      open \"$PROJ/NEU Helper.command\""
 echo "    or double-click:   NEU Helper.command  (project folder or Desktop)"
 echo "    it also opens once per day at login"
