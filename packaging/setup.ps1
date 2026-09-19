@@ -43,6 +43,20 @@ if (-not (Test-Path $exe)) {
     exit 1
 }
 
+# ---------------------------------------------------------------- 0. unblock
+Step 0 "Clearing the download tag"
+# Windows marks every file extracted from a downloaded zip as "from the
+# internet" (a Zone.Identifier stream), and then refuses to load DLLs and .NET
+# assemblies that carry it. The exes here are single-file builds so they cope
+# on their own, but clear the whole folder anyway -- it costs nothing and it
+# means nothing in here can ever hit that wall.
+try {
+    Get-ChildItem -LiteralPath $here -Recurse -File -ErrorAction Stop | Unblock-File
+    Ok "cleared the 'downloaded from the internet' tag on this folder"
+} catch {
+    Warn "could not clear the download tag: $($_.Exception.Message)"
+}
+
 # ---------------------------------------------------------------- 1. token
 Step 1 "Storing the Canvas token"
 $cfgDir = Join-Path $env:USERPROFILE ".canvas-helper"

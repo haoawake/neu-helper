@@ -32,8 +32,15 @@ Remove-Item -Recurse -Force dist, build -ErrorAction SilentlyContinue
 & python -m PyInstaller packaging\neu-helper.spec --noconfirm --distpath dist --workpath build
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
+# onefile: PyInstaller drops the two exes straight into dist\, so assemble
+# the distribution folder here.
+foreach ($n in @("NEU Helper.exe", "canvas-mcp.exe")) {
+    if (-not (Test-Path (Join-Path $proj "dist\$n"))) { throw "$n was not produced" }
+}
 $out = Join-Path $proj "dist\NEU Helper"
-if (-not (Test-Path (Join-Path $out "NEU Helper.exe"))) { throw "NEU Helper.exe was not produced" }
+New-Item -ItemType Directory -Path $out | Out-Null
+Move-Item (Join-Path $proj "dist\NEU Helper.exe") $out
+Move-Item (Join-Path $proj "dist\canvas-mcp.exe") $out
 
 Say "copying the files that must sit next to the exe"
 Copy-Item (Join-Path $proj "CLAUDE.example.md") $out
@@ -53,6 +60,14 @@ NEU Helper -- packaged build for Windows (no Python needed)
      Get a token at: Canvas -> Account -> Settings -> New Access Token.
 
   3. Double-click "NEU Helper" on the Desktop.
+
+Why setup.ps1 and not just the exe
+  Windows tags every file that came out of a downloaded zip as "from the
+  internet", and refuses to load DLLs that carry that tag. The two exes here
+  are single-file builds, so only the exe itself is tagged and Windows is
+  happy -- but setup.ps1 clears the tag from the whole folder anyway, so the
+  helper files are clean too. (An earlier multi-file build failed to start for
+  exactly this reason.)
 
 What setup.ps1 does
   - stores the token in %USERPROFILE%\.canvas-helper\ (outside this folder,
