@@ -195,6 +195,10 @@ class Toast:
                 | NSWindowCollectionBehaviorStationary
                 | NSWindowCollectionBehaviorFullScreenAuxiliary)
             w.setReleasedWhenClosed_(False)
+            # 无边框窗口本来不显示标题,设一个是为了两件事:排障时在窗口列表里
+            # 认得出来,以及**绝对不能和主窗口重名** —— find_own_window 是按
+            # 标题找的,撞名会让窗口操作打到弹窗身上(Windows 那边踩过)
+            w.setTitle_("NEU Helper Toast")
             # **弹出来不能抢焦点** —— 正在打字的时候被打断是最招人烦的
             w.setIgnoresMouseEvents_(False)
             self._view = ToastView.alloc().initWithToast_frame_(

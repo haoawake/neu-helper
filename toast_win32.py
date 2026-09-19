@@ -211,7 +211,13 @@ class Toast:
             self.hwnd = user32.CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
                 | WS_EX_NOACTIVATE,
-                "NEUHelperToast", "NEU Helper", WS_POPUP,
+                # **标题不能叫 "NEU Helper"** —— 那是主窗口的标题,而
+                # native_window.find_own_window 是按"本进程 + 标题相同"
+                # 找窗口的。撞名的话,弹窗可见的那几秒里它可能被当成
+                # 主窗口,之后所有窗口操作(改尺寸、拖动、收球)全打到
+                # 弹窗身上。悬浮球一直用的是 "NEU Helper Orb",
+                # 弹窗是漏网的那个。这个标题不显示在任何地方。
+                "NEUHelperToast", "NEU Helper Toast", WS_POPUP,
                 0, 0, 10, 10, None, None, cls.hInstance, None)
             self._ready.set()
             msg = wintypes.MSG()

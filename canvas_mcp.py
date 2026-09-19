@@ -461,7 +461,11 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     log("server started, waiting for initialize")
     for line in sys.stdin:
-        line = line.strip()
+        # 去掉 BOM。有些客户端(PowerShell 的管道就是一个)会在 UTF-8 里带
+        # 上 BOM,而 json.loads 不认它 —— 整条请求会被当成坏 JSON 丢掉。
+        # Claude Code 本身不带,但装机脚本的自检是用管道喂进来的,
+        # 不容忍这一个字符就会每次都误报"MCP 没响应"。
+        line = line.lstrip("﻿").strip()
         if not line:
             continue
         try:

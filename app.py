@@ -19,7 +19,12 @@ import sys
 import traceback
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+# 打包之后 data/ 要在 exe 旁边(可写),不能在临时解包目录里 ——
+# 理由见 server.py 里同一处的注释。没打包时两者一样。
+if getattr(sys, "frozen", False):
+    HERE = Path(sys.executable).resolve().parent
+else:
+    HERE = Path(__file__).resolve().parent
 LOG = HERE / "data" / "app.log"
 
 

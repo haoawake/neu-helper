@@ -54,8 +54,19 @@ import mailpeople
 import memos
 import toast as toastmod
 
-HERE = Path(__file__).resolve().parent
-GUI = HERE / "gui"
+# 两个根目录。**没打包的时候它们是同一个**,所以平时读起来和以前一样。
+#
+# 打包成 exe 之后必须分开:
+#   GUI   前端三件套是**打包进去的只读资源**,在临时解包目录里
+#   HERE  data/ 是**运行时要写**的(邮件、对话、课件、偏好),得在 exe 旁边
+# 混用的后果是:要么界面加载不出来,要么每次启动数据都没了
+# (onefile 模式下解包目录是临时的,退出就删)。
+if getattr(sys, "frozen", False):
+    RES = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    HERE = Path(sys.executable).resolve().parent
+else:
+    RES = HERE = Path(__file__).resolve().parent
+GUI = RES / "gui"
 
 WEEK = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
