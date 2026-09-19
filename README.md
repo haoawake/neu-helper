@@ -10,6 +10,27 @@ Canvas 实例:`northeastern.instructure.com`(可配置,见 [canvas_api.py](canva
 
 ---
 
+## 装哪个版本
+
+| | 怎么拿 | 要不要装 Python |
+|---|---|---|
+| **Windows 打包版** | [Releases](https://github.com/haoawake/neu-helper/releases/latest) 下 `NEU-Helper-win-x64.zip`,解压后跑一次 `setup.ps1` | **不用** |
+| **macOS 打包版** | 没有现成的,在 Mac 上 `./packaging/build_mac.sh` 自己构建一次 | 构建时要 |
+| **源码版(两个平台)** | `git clone` 之后 `./install.sh` / `install.ps1` | 要(3.9+) |
+
+macOS 没有现成包**不是偷懒**:PyInstaller 冻结的是它运行那台机器的解释器和
+原生库,所以 mac 的包没法在 Windows 上做。`.spec` 是两端共用的,那条命令跑完
+就是一个能用的 `.app`。不想折腾打包的话,macOS 上直接用源码版更省事。
+
+打包版和源码版的**唯一功能差别**:两个课件技能会去调 `python`,打包版没带
+解释器,所以那两个辅助脚本用不了。搜课件本身照样能用(助手直接 grep 同步下来的
+`.txt`)。
+
+第一次打开前记得**改 `CLAUDE.md` 里的课程对照表** —— 那份是从
+`CLAUDE.example.md` 复制来的模板,不改的话简报会讲错课。
+
+---
+
 ## 怎么打开
 
 **双击桌面上的「NEU Helper」**(玻璃球图标)。没有控制台、没有黑窗闪一下。
