@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEU Helper</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<!-- data-mode 决定显示哪一态:chat / full。切换在 app.js 的 setMode()。
+     第三态「悬浮球」不在这个页面里 —— 它是 orb_window.py 自己画的分层窗口,
+     收成球的时候这个窗口整个隐藏,所以这里只需要两套布局。 -->
+<body data-mode="full">
+
+<!-- ═══════════════ 自定义标题栏(无边框) ═══════════════
+     按钮刻意放在拖拽区**外面**:拖拽绑在 .drag-region 的 pointerdown 上,
+     放在里面的按钮会变成「一按就拖窗口」。
+     拖拽区双击 = 展开 / 最大化。 -->
+<header class="titlebar">
+  <div class="tb-drag drag-region" id="tbDrag" title="拖动移动窗口 · 双击展开">
+    <span class="brand-mark"></span>
+    <span class="brand-name">NEU Helper</span>
+    <span class="tb-meta" id="appbarMeta"></span>
+  </div>
+  <!-- 子页面切换。刻意放在拖拽区外面:拖拽绑在 .drag-region 上,
+       放里面的按钮会变成"一按就拖窗口" -->
+  <div class="seg page-seg" id="pageSeg" role="tablist" aria-label="子页面">
+    <button class="seg-btn is-on" data-v="study" role="tab">学业</button>
+    <button class="seg-btn" data-v="mail" role="tab">
+      邮箱<span class="page-badge" id="mailBadge" hidden></span>
+    </button>
+  </div>
+
+  <div class="tb-actions">
+    <!-- 展开 / 收成对话框是同一个按钮的两个方向,图标和说明随形态换 -->
+    <button class="icon-btn" id="btnSize" title="收成对话框">
+      <span aria-hidden="true" id="btnSizeIcon">▭</span>
+      <span class="sr" id="btnSizeLabel">收成对话框</span>
+    </button>
+    <button class="icon-btn" id="btnRefresh" title="重新抓取 Canvas 数据">
+      <span aria-hidden="true">⟳</span><span class="sr">刷新</span>
+    </button>
+    <button class="icon-btn" id="btnPin" title="钉在最前面" aria-pressed="false">
+      <span aria-hidden="true">📌</span><span class="sr">钉在最前面</span>
+    </button>
+    <button class="icon-btn" id="btnSettings" title="设置">
+      <span aria-hidden="true">⚙</span><span class="sr">设置</span>
+    </button>
+    <span class="tb-sep"></span>
+    <button class="icon-btn" id="btnToOrb" title="收成悬浮球">
+      <span aria-hidden="true">○</span><span class="sr">收成悬浮球</span>
+    </button>
+    <button class="icon-btn" id="btnMin" title="最小化到任务栏">
+      <span aria-hidden="true">─</span><span class="sr">最小化</span>
+    </button>
+    <button class="icon-btn tb-close" id="btnClose" title="关闭">
+      <span aria-hidden="true">✕</span><span class="sr">关闭</span>
+    </button>
+  </div>
+</header>
+
+<div class="stage">
+<main class="layout">
+
+  <!-- ─────────────── 左栏:数据 ─────────────── -->
+  <section class="pane pane-data" id="paneData">
+
+   <div id="dashView">
+    <div id="banner" class="banner" hidden></div>
+    <div id="overdueAlert" class="alert" hidden></div>
+
+    <!-- 唯一的 hero 数字:距离下一个截止还有多久 -->
+    <section class="hero" id="hero" hidden>
+      <div class="hero-label">距离下一个截止</div>
+      <div class="hero-row">
+        <span class="hero-figure" id="heroDays">—</span>
+        <span class="hero-unit" id="heroUnit">天</span>
+      </div>
+      <div class="hero-sub">
+        <span id="heroStatus"></span>
+        <span class="hero-title" id="heroTitle"></span>
+      </div>
+      <div class="hero-due muted" id="heroDue"></div>
+    </section>
+
+    <div class="stat-row" id="statRow"></div>
+
+    <!-- 课程入口:点进去是这门课的单页(作业 / 课件 / 公告) -->
+    <div class="course-chips" id="courseChips"></div>
+
+    <section class="block">
+      <div class="block-head">
+        <h2>待办</h2>
+        <button class="link-btn" id="btnToggleDone">显示已提交</button>
+      </div>
+      <div id="todoList" class="card-list"></div>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h2>成绩</h2></div>
+      <table class="grade-table" id="gradeTable"></table>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h2>公告</h2></div>
+      <div id="annList" class="ann-list"></div>
+    </section>
+
+
+    <footer class="pane-foot muted" id="paneFoot"></footer>
+   </div><!-- /#dashView -->
+
+   <!-- ─────── 课程单页 ───────
+        点课程卡片进来:这门课的作业(带要求和附件)、老师排的课件模块、公告。
+        这里的每一行都能拖到右边的对话框上。 -->
+   <div id="courseView" hidden>
+     <div class="course-head">
+       <button class="icon-btn" id="btnCourseBack" title="返回仪表盘">
+         <span aria-hidden="true">←</span><span class="sr">返回</span>
+       </button>
+       <div class="course-title">
+         <div class="course-name" id="courseName"></div>
+         <div class="course-sub muted" id="courseSub"></div>
+       </div>
+       <button class="link-btn" id="btnCourseFolder">本地文件夹</button>
+       <button class="link-btn" id="btnCourseSync">同步课件</button>
+       <button class="link-btn" id="btnCourseOpen">在 Canvas 打开</button>
+     </div>
+
+     <div class="seg course-seg" id="courseSeg" role="tablist">
+       <button class="seg-btn is-on" data-v="hw" role="tab">作业</button>
+       <button class="seg-btn" data-v="mat" role="tab">课件</button>
+       <button class="seg-btn" data-v="ann" role="tab">公告</button>
+     </div>
+
+     <div id="courseBody"></div>
+     <footer class="pane-foot muted" id="courseFoot"></footer>
+   </div>
+  </section>
+
+  <!-- ─────────────── 右栏:简报 / 对话 ─────────────── -->
+  <!-- 整个右栏都是拖拽落点:左边的作业/公告/文件拖过来就关联到这次对话 -->
+  <section class="pane pane-side" id="paneSide">
+    <div class="drop-hint" id="dropHint">松手就把它关联到这次对话</div>
+    <div class="tabs" role="tablist">
+      <button class="tab is-active" id="tabBrief" role="tab" aria-selected="true">简报</button>
+      <button class="tab" id="tabChat" role="tab" aria-selected="false">对话</button>
+      <button class="tab" id="tabMemo" role="tab" aria-selected="false">
+        备忘录<span class="tab-n" id="tabMemoN" hidden></span>
+      </button>
+      <span class="tab-spacer"></span>
+      <span class="muted" id="sideMeta"></span>
+    </div>
+
+    <!-- 简报 -->
+    <div class="tab-panel" id="panelBrief">
+      <div class="brief-bar">
+        <select id="briefDate" class="select" aria-label="选择日期"></select>
+        <button class="link-btn" id="btnGenBrief">生成今日</button>
+      </div>
+      <div class="brief-body" id="briefBody"></div>
+      <div class="chat-status" id="briefStatus" hidden></div>
+    </div>
+
+    <!-- 对话 -->
+    <div class="tab-panel" id="panelChat" hidden>
+      <!-- 对话历史:下拉选哪一段,右边两个按钮开新的 / 删这段 -->
+      <div class="brief-bar">
+        <select id="chatPick" class="select" aria-label="选择对话"></select>
+        <button class="link-btn" id="btnNewChat">新对话</button>
+        <button class="link-btn link-danger" id="btnDelChat">删除</button>
+      </div>
+      <div class="chat-log" id="chatLog"></div>
+      <!-- 拖进来的关联对象:作业 / 公告 / 文件。之后的提问都针对它们 -->
+      <div class="ctx-bar" id="ctxBar" hidden></div>
+      <div class="chat-status" id="chatStatus" hidden></div>
+      <form class="composer" id="composer">
+        <!-- placeholder 必须短:对话框只有 400 宽,长了会折成两行 -->
+        <textarea id="chatInput" rows="1" placeholder="问点什么…"
+                  title="Enter 发送 · Shift+Enter 换行"></textarea>
+        <button type="submit" class="send-btn" id="btnSend" title="发送">
+          <span aria-hidden="true">➤</span><span class="sr">发送</span>
+        </button>
+      </form>
+    </div>
+  <div class="tab-panel memo-panel" id="panelMemo" hidden>
+      <div class="memo-head">
+        <button class="link-btn" id="btnMemoAdd">新增一条</button>
+        <span class="memo-head-spacer"></span>
+        <span class="muted" id="memoCount"></span>
+      </div>
+      <form class="memo-form" id="memoForm" hidden>
+        <input type="text" id="memoText" class="num num-wide" placeholder="要记什么">
+        <div class="memo-form-row">
+          <select id="memoKind" class="select">
+            <option value="plain">纯文字</option>
+            <option value="once">某一天</option>
+            <option value="weekly">每周</option>
+            <option value="monthly">每月</option>
+          </select>
+          <input type="datetime-local" id="memoAt" class="num num-wide" hidden>
+          <select id="memoWeekday" class="select" hidden>
+            <option value="0">周一</option><option value="1">周二</option>
+            <option value="2">周三</option><option value="3">周四</option>
+            <option value="4">周五</option><option value="5">周六</option>
+            <option value="6">周日</option>
+          </select>
+          <input type="number" id="memoDay" class="num" min="1" max="31" value="1" hidden>
+          <input type="time" id="memoTime" class="num" value="09:00" hidden>
+        </div>
+        <div class="memo-form-row">
+          <button class="btn btn-quiet" id="btnMemoSave" type="submit">记下</button>
+          <button class="btn btn-quiet" id="btnMemoCancel" type="button">取消</button>
+          <span class="muted" id="memoFormHint"></span>
+        </div>
+      </form>
+      <div class="memo-list" id="memoList"></div>
+    </div>
+</section>
+
+</main>
+
+<!-- ═══════════════ 邮箱子页面 ═══════════════
+     左边收件箱,右边邮件简报 / 邮件对话。**历史记录和课业那套完全分开**:
+     data/mail_briefings.json、data/mail_chats.json,CLI 通道也是独立的两条。 -->
+<!-- 显隐由 body[data-page] 的 CSS 管,**不要**加 hidden 属性:
+     [hidden]{display:none!important} 会压过页面切换那条规则,整屏空白 -->
+<main class="layout layout-mail" id="layoutMail">
+
+  <section class="pane pane-data" id="paneMail">
+    <div class="mail-head">
+      <div class="mail-title">
+        <div class="mail-count" id="mailCount">—</div>
+        <div class="muted" id="mailMeta"></div>
+      </div>
+      <!-- 收件箱 / 垃圾箱。坏标签的信只在垃圾箱里 -->
+      <button class="icon-btn box-btn" id="btnMailBox" title="切到垃圾箱">
+        <span aria-hidden="true">🗑</span>
+        <span class="box-n" id="mailTrashN" hidden></span>
+        <span class="sr">垃圾箱</span>
+      </button>
+      <span class="muted" id="mailWatchCount"></span>
+      <select id="mailPerson" class="select" aria-label="按发件人分组">
+        <option value="">所有人</option>
+      </select>
+      <select id="mailSort" class="select" aria-label="排序">
+        <option value="date_desc">时间 · 新→旧</option>
+        <option value="date_asc">时间 · 旧→新</option>
+        <option value="level">按重要程度</option>
+      </select>
+      <select id="mailDay" class="select" aria-label="看哪一天">
+        <option value="">所有日期</option>
+      </select>
+      <select id="mailLevel" class="select" aria-label="按重要程度过滤">
+        <option value="0">所有级别</option>
+        <option value="1">普通以上</option>
+        <option value="2">留意以上</option>
+        <option value="3">只看要紧的</option>
+      </select>
+      <select id="mailAccount" class="select" aria-label="选择账号"></select>
+      <button class="link-btn" id="btnMailUnread">只看未读</button>
+      <button class="link-btn" id="btnMailFetch">收取</button>
+    </div>
+    <!-- 标签行:AI 过目时打上的标签,点一下就只看这一类 -->
+    <div class="mail-tags" id="mailTagBar"></div>
+    <div id="mailBanner" class="banner" hidden></div>
+    <div class="mail-ai" id="mailAiBar" hidden></div>
+    <div id="mailList" class="mail-list"></div>
+    <div class="mail-pager" id="mailPager" hidden></div>
+    <!-- 单封视图。和列表互斥,由 #paneMail 上的 .is-one 控制显隐 —— 它只占
+         左栏,右栏的对话照常 -->
+    <div class="mail-one" id="mailOne" hidden></div>
+    <footer class="pane-foot muted" id="mailFoot"></footer>
+  </section>
+
+  <section class="pane pane-side" id="paneMailSide">
+    <div class="drop-hint" id="mailDropHint">松手就把这封邮件关联到对话</div>
+    <div class="tabs" role="tablist">
+      <button class="tab is-active" id="mailTabBrief" role="tab">邮件简报</button>
+      <button class="tab" id="mailTabChat" role="tab">邮件对话</button>
+      <button class="tab" id="mailTabMemo" role="tab">
+        备忘录<span class="tab-n" id="mailTabMemoN" hidden></span>
+      </button>
+      <span class="tab-spacer"></span>
+      <span class="muted" id="mailSideMeta"></span>
+    </div>
+
+    <div class="tab-panel" id="mailPanelBrief">
+      <div class="brief-bar">
+        <select id="mailBriefDate" class="select" aria-label="选择日期"></select>
+        <button class="link-btn" id="btnMailGenBrief">生成今日</button>
+      </div>
+      <div class="brief-body" id="mailBriefBody"></div>
+      <div class="chat-status" id="mailBriefStatus" hidden></div>
+    </div>
+
+    <div class="tab-panel" id="mailPanelChat" hidden>
+      <div class="brief-bar">
+        <select id="mailChatPick" class="select" aria-label="选择对话"></select>
+        <button class="link-btn" id="btnMailNewChat">新对话</button>
+        <button class="link-btn link-danger" id="btnMailDelChat">删除</button>
+      </div>
+      <div class="chat-log" id="mailChatLog"></div>
+      <div class="ctx-bar" id="mailCtxBar" hidden></div>
+      <div class="chat-status" id="mailChatStatus" hidden></div>
+      <form class="composer" id="mailComposer">
+        <textarea id="mailChatInput" rows="1" placeholder="问点什么…"
+                  title="Enter 发送 · Shift+Enter 换行"></textarea>
+        <button type="submit" class="send-btn" id="btnMailSend" title="发送">
+          <span aria-hidden="true">➤</span><span class="sr">发送</span>
+        </button>
+      </form>
+    </div>
+  </section>
+
+</main>
+
+  <!-- 第三列:备忘录。两个 layout 共用一份,所以挂在 .stage 上而不是塞进
+       任何一个 layout 里。收起来是一条竖边,点一下展开。 -->
+
+</div>
+
+
+<!-- 作业详情 -->
+<div class="sheet-backdrop" id="sheetBackdrop" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head">
+      <h3 id="sheetTitle"></h3>
+      <button class="icon-btn" id="btnCloseSheet" title="关闭">
+        <span aria-hidden="true">✕</span><span class="sr">关闭</span>
+      </button>
+    </div>
+    <div class="sheet-meta" id="sheetMeta"></div>
+    <div class="sheet-body" id="sheetBody"></div>
+    <div class="sheet-foot">
+      <button class="btn" id="btnSheetAsk">问 Claude 这个作业</button>
+      <button class="btn btn-quiet" id="btnSheetOpen">在 Canvas 打开</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ 设置 ═══════════════
+     每一项都直接写进 data/prefs.json(不用 localStorage:端口每次启动都换,
+     localStorage 按 origin 隔离,一重启就全丢)。滑块是即时预览的。 -->
+<div class="sheet-backdrop" id="prefsBackdrop" hidden>
+  <div class="sheet sheet-prefs" role="dialog" aria-modal="true" aria-labelledby="prefsTitle">
+    <div class="sheet-head">
+      <h3 id="prefsTitle">设置</h3>
+      <div class="seg prefs-seg" id="prefsSeg" role="tablist" aria-label="设置分栏">
+        <button class="seg-btn is-on" data-v="general" role="tab">通用</button>
+        <button class="seg-btn" data-v="canvas" role="tab">Canvas</button>
+        <button class="seg-btn" data-v="mail" role="tab">
+          邮箱<span class="page-badge" id="prefsMailBadge" hidden></span>
+        </button>
+      </div>
+      <button class="icon-btn" id="btnClosePrefs" title="关闭">
+        <span aria-hidden="true">✕</span><span class="sr">关闭</span>
+      </button>
+    </div>
+
+    <div class="sheet-body prefs-body">
+
+      <!-- ════════ 通用:界面和窗口 ════════ -->
+      <div class="prefs-tab" data-tab="general">
+
+        <section class="pref-group">
+          <h4>外观</h4>
+          <div class="pref-row">
+            <label class="pref-label">主题</label>
+            <div class="seg" id="segTheme" role="radiogroup" aria-label="主题">
+              <button class="seg-btn" data-v="auto" role="radio">跟随系统</button>
+              <button class="seg-btn" data-v="light" role="radio">浅色</button>
+              <button class="seg-btn" data-v="dark" role="radio">深色</button>
+            </div>
+          </div>
+
+          <div class="pref-row">
+            <label class="pref-label" for="rngBlur">玻璃模糊</label>
+            <input type="range" id="rngBlur" class="rng" min="0" max="44" step="2"
+                   title="0 = 关掉模糊,最省电">
+            <output class="pref-val" id="outBlur"></output>
+          </div>
+
+          <div class="pref-row">
+            <label class="pref-label" for="rngGlass">表面不透明度</label>
+            <input type="range" id="rngGlass" class="rng" min="30" max="100" step="2"
+                   title="页面里玻璃板自己的底色;低于 45% 正文会发灰">
+            <output class="pref-val" id="outGlass"></output>
+          </div>
+
+          <div class="pref-row">
+            <label class="pref-label" for="rngOpacity">整窗透明度</label>
+            <input type="range" id="rngOpacity" class="rng" min="55" max="100" step="1"
+                   title="真的透到桌面,代价是文字也跟着变透">
+            <output class="pref-val" id="outOpacity"></output>
+          </div>
+
+          <div class="pref-row">
+            <label class="pref-label" for="swAnim">过渡动画</label>
+            <button class="switch" id="swAnim" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>悬浮球</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="rngOrb">直径</label>
+            <input type="range" id="rngOrb" class="rng" min="26" max="72" step="2"
+                   title="球:单击还原 · 双击展开 · 右键菜单 · 拖动挪位置">
+            <output class="pref-val" id="outOrb"></output>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnResetOrbPos">把球放回右下角</button>
+            <button class="btn btn-quiet" id="btnCollapseNow">现在就收成球</button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>信息弹窗</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="swToast"
+                   title="Canvas 有新作业/新公告、或者来了新邮件时,右下角弹一条横条">开启</label>
+            <button class="switch" id="swToast" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="numToastSecs">停留</label>
+            <input type="number" id="numToastSecs" class="num" min="3" max="60" step="1">
+            <span class="pref-val">秒</span>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnToastTest">试一条</button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>窗口</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="swTopmost"
+                   title="只管对话框那一态;要所有形态都置顶,用标题栏的 📌">对话框保持在最前</label>
+            <button class="switch" id="swTopmost" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnOpenData">打开数据目录</button>
+            <button class="btn btn-quiet" id="btnOpenStartup">打开启动文件夹</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- ════════ Canvas:数据口径和简报 ════════ -->
+      <div class="prefs-tab" data-tab="canvas" hidden>
+
+        <section class="pref-group">
+          <h4>每日简报</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="numHour">播报时刻</label>
+            <input type="number" id="numHour" class="num" min="0" max="23" step="1">
+            <span class="pref-val">点(每天一次)</span>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="numBriefHistory"
+                   title="把前几天的简报原文一起给模型,好说出变化;0 = 不带">带几天历史</label>
+            <input type="number" id="numBriefHistory" class="num" min="0" max="7" step="1">
+            <span class="pref-val">份</span>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnGenNow">立即生成今天的简报</button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>数据口径</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="numUpcoming">待办往后看</label>
+            <input type="number" id="numUpcoming" class="num" min="7" max="120" step="7">
+            <span class="pref-val">天</span>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="numSoon"
+                   title="临近 = 这个数的两倍以内,再往后算充裕">几天内算紧急</label>
+            <input type="number" id="numSoon" class="num" min="1" max="14" step="1">
+            <span class="pref-val">天</span>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="numAnnDays">公告往前看</label>
+            <input type="number" id="numAnnDays" class="num" min="3" max="60" step="1">
+            <span class="pref-val">天</span>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>重点课程</h4>
+          <textarea id="txtFocus" class="ta" rows="3"
+                    title="填了之后简报优先盯这几门,其余的一句带过"
+                    placeholder="一行一个课程简称,比如&#10;CS5800&#10;DS5110"></textarea>
+        </section>
+
+        <section class="pref-group">
+          <h4>待办</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="swDismissed"
+                   title="关掉之后它们从列表里消失,存档还在,能全部恢复">列出划掉的条目</label>
+            <button class="switch" id="swDismissed" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnRestoreAll">全部恢复</button>
+            <span class="muted" id="dismissCount"></span>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>课件同步</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="swSync"
+                   title="启动后一次、之后每小时一次,增量;存到 data/downloads/">自动同步到本地</label>
+            <button class="switch" id="swSync" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="numMaxMB">单文件上限</label>
+            <input type="number" id="numMaxMB" class="num" min="1" max="2000" step="10">
+            <span class="pref-val">MB</span>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnSyncNow">立即同步</button>
+            <button class="btn btn-quiet" id="btnOpenDownloads">打开课件目录</button>
+            <span class="muted" id="syncState"></span>
+          </div>
+        </section>
+      </div>
+
+      <!-- ════════ 邮箱:我是谁、什么算重要、盯着什么 ════════ -->
+      <div class="prefs-tab" data-tab="mail" hidden>
+
+        <section class="pref-group">
+          <h4>我的情况</h4>
+          <div class="facts" id="factList"
+               title="这几行会原样进 AI 过目和邮件简报,作为判断依据"></div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnFactAdd">加一条</button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>AI 过目</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="swMailAi"
+                   title="打标签 / 评级 / 写摘要。每封信只过一次模型,结果存档复用">新邮件自动过目</label>
+            <button class="switch" id="swMailAi" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="selMailModel">用哪个模型</label>
+            <select id="selMailModel" class="select">
+              <option value="haiku">Haiku · 最省</option>
+              <option value="sonnet">Sonnet · 均衡(推荐)</option>
+              <option value="opus">Opus · 最准</option>
+            </select>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnMailFill"
+                    title="链接和附件要整封下下来才有。取过的不会再取第二次">取正文和附件</button>
+            <span class="muted" id="fillState"></span>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnMailAnalyze">过目剩下的</button>
+            <button class="btn btn-quiet" id="btnMailRedo"
+                    title="作废现有结论、按新的个人信息重看一遍(要再花一次钱)">全部重判</button>
+            <span class="muted" id="aiState"></span>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>标签目录</h4>
+          <div class="tagcat drop-zone" id="tagCatalog"
+               title="这份目录会进分析 prompt。往下面那个框里拖 = 设成坏标签"></div>
+          <div class="tag-badbox">
+            <div class="tag-badhead">
+              <span aria-hidden="true">🗑</span>
+              <span>坏标签 —— 这类信收进垃圾箱</span>
+            </div>
+            <div class="tagcat drop-zone" id="tagBad"
+                 title="拖进来 = 设成坏标签;拖回上面 = 收回来"></div>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <input type="text" id="tagNew" class="num num-wide" placeholder="新标签,比如 实习">
+            <button class="btn btn-quiet" id="btnTagAdd">加</button>
+            <button class="btn btn-quiet" id="btnTagReset">恢复默认</button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>发件人分组</h4>
+          <div class="people-groups" id="peopleGroups"
+               title="分组跟着人走。分了组的人不会被坏标签藏起来;给谁分组:点开那封信,发件人旁边有下拉"></div>
+          <div class="pref-row pref-row-btns">
+            <input type="text" id="groupNew" class="num num-wide" placeholder="新分组,比如 导师">
+            <button class="btn btn-quiet" id="btnGroupAdd">加</button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>还在盯的邮件</h4>
+          <div class="watch-list" id="watchList"
+               title="在邮件列表里点 ☆ 就是盯住;简报会一直提醒到你标完成"></div>
+        </section>
+
+        <section class="pref-group">
+          <h4>收取</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="swMail">后台收邮件</label>
+            <button class="switch" id="swMail" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="numMailHour">简报时刻</label>
+            <input type="number" id="numMailHour" class="num" min="0" max="23" step="1">
+            <span class="pref-val">点(每天一次)</span>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="swMarkRead"
+                   title="唯一会改动你邮箱的操作:只动「已读」这一个标记">读过就同步已读</label>
+            <button class="switch" id="swMarkRead" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>账号</h4>
+          <div class="mail-acc" id="mailAccList"></div>
+          <details class="pref-fold" id="foldQQ">
+            <summary>添加账号(QQ / 163 / Gmail / 其他 IMAP)</summary>
+            <p class="pref-hint pref-hint-wide">
+              QQ 要的是<strong>授权码</strong>,不是登录密码:QQ 邮箱 → 设置 → 账号 →
+              「IMAP/SMTP 服务」→ 开启 → 发短信验证 → 拿到 16 位授权码。
+            </p>
+            <p class="pref-hint pref-hint-wide">
+              <strong>Outlook / 学校邮箱:在 Outlook 里设置转发到 QQ。</strong>
+            </p>
+            <div class="pref-row">
+              <select id="mailPreset" class="select">
+                <option value="qq">QQ 邮箱</option>
+                <option value="163">网易 163</option>
+                <option value="gmail">Gmail</option>
+                <option value="other">其他 IMAP</option>
+              </select>
+              <input type="text" id="mailEmail" class="num num-wide" placeholder="邮箱地址">
+            </div>
+            <div class="pref-row">
+              <input type="password" id="mailPassword" class="num num-wide"
+                     placeholder="授权码 / 应用专用密码">
+              <input type="text" id="mailHost" class="num num-wide"
+                     placeholder="IMAP 服务器(选「其他」时填)" hidden>
+            </div>
+            <div class="pref-row pref-row-btns">
+              <button class="btn btn-quiet" id="btnMailAddImap">添加并验证</button>
+              <span class="muted" id="mailAddState"></span>
+            </div>
+          </details>
+        </section>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

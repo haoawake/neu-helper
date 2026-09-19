@@ -1,0 +1,32 @@
+# 行尾必须钉死,不能交给 core.autocrlf 去猜。
+#
+# 这台开发机的 autocrlf 是 true,意思是"检出时把 LF 换成 CRLF"。对 .py 和 .md
+# 无所谓,但对 shell 脚本是致命的:带 \r 的 shebang 在 macOS 上会得到
+#     bad interpreter: /bin/bash^M: no such file or directory
+# 四个脚本一个都跑不起来,而且报错信息完全不指向真正的原因。
+#
+# 反过来 .vbs / .ps1 / .cmd 是 Windows 的东西,CRLF 才是它们的常态
+# (cmd.exe 对 LF 的 .cmd 处理有历史问题)。
+#
+# 所以两类分别锁死,谁在哪个平台 clone 都一样。
+
+*           text=auto
+
+# macOS / 类 Unix:永远 LF
+*.sh        text eol=lf
+*.command   text eol=lf
+*.plist     text eol=lf
+
+# Windows:永远 CRLF
+*.ps1       text eol=crlf
+*.vbs       text eol=crlf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+
+# 二进制,别碰
+*.ico       binary
+*.icns      binary
+*.png       binary
+*.pdf       binary
+*.zip       binary
+*.dmg       binary
