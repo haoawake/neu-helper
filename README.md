@@ -205,21 +205,218 @@ python3 app.py
 
 ---
 
-## Claude Code
+## 连接 Claude Code
 
-NEU Helper 的 **Canvas 仪表盘、邮箱、本地备忘录** 不依赖 Claude Code 也能运行。
-
-以下功能需要安装 Claude Code CLI：
+NEU Helper 的 **Canvas 仪表盘、邮箱列表和本地备忘录** 不依赖 Claude Code 也能运行；但下面这些功能需要本机已经安装并登录 Claude Code：
 
 - 每日 AI 简报
 - 课业 AI 对话
-- 邮件 AI 分析和邮件简报
+- 邮件 AI 分类和邮件简报
 - Canvas MCP 查询
-- 课件相关 Claude Code skills
+- `course-files` / `course-sync` skills
 
-安装完成后，`install.ps1` / `install.sh` 会尝试自动注册 Canvas MCP。
+NEU Helper **不要求你另外填写 Anthropic API Key**。桌面应用直接调用本机的 `claude` CLI，所以只要 Claude Code 自己已经能正常使用，NEU Helper 就能复用同一套登录状态。
 
-首次安装还会从 `CLAUDE.example.md` 生成本地 `CLAUDE.md`。请把里面的课程对照表改成你自己的课程，否则 AI 会拿模板课程名一本正经地胡说八道，这种事故显然不值得保留。
+### 1. 安装 Claude Code
+
+Anthropic 目前推荐原生安装方式。
+
+**Windows PowerShell：**
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+```
+
+也可以用 WinGet：
+
+```powershell
+winget install Anthropic.ClaudeCode
+```
+
+**macOS / Linux / WSL：**
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+macOS 也可以用 Homebrew：
+
+```bash
+brew install --cask claude-code
+```
+
+安装后先确认命令存在：
+
+```bash
+claude --version
+```
+
+如果 Windows 安装成功但终端提示找不到 `claude`，重开一个终端；原生安装器通常把它放在：
+
+```text
+%USERPROFILE%\.local\bin
+```
+
+### 2. 登录 Claude Code
+
+第一次运行：
+
+```bash
+claude
+```
+
+然后按终端提示在浏览器中完成登录。如果已经进入 Claude Code，也可以执行：
+
+```text
+/login
+```
+
+登录完成后先随便发一句消息，确认普通 Claude Code 会话本身可以正常回答。
+
+### 3. 让 NEU Helper 注册 Canvas MCP
+
+通常**不用手动做这一步**。
+
+运行 NEU Helper 的安装脚本时：
+
+```powershell
+# Windows 源码版
+powershell -ExecutionPolicy Bypass -File install.ps1 -Token "14523~xxxxxxxxxxxxxxxx"
+```
+
+或：
+
+```bash
+# macOS
+./install.sh --token "14523~xxxxxxxxxxxxxxxx"
+```
+
+安装器会检测 `claude` 命令，并把仓库里的 `canvas_mcp.py` 注册为名为 `canvas` 的 **user-scope MCP server**。
+
+它做的事情本质上相当于：
+
+```bash
+claude mcp remove canvas -s user
+claude mcp add canvas -s user -- python /absolute/path/to/neu-helper/canvas_mcp.py
+```
+
+macOS 上解释器通常是 `python3`；安装器会使用它实际找到的 Python 绝对路径，所以正常情况下不需要自己改命令。
+
+`-s user` 很重要：这意味着 Canvas MCP 不只属于 NEU Helper 这个目录。注册成功后，你在**任何目录**启动 Claude Code，都可以访问同一套 Canvas 工具。
+
+### 4. 检查 MCP 是否连接成功
+
+可以先在终端查看：
+
+```bash
+claude mcp list
+```
+
+应该能看到名为：
+
+```text
+canvas
+```
+
+也可以启动：
+
+```bash
+claude
+```
+
+然后输入：
+
+```text
+/mcp
+```
+
+确认 `canvas` 已连接。
+
+最后直接试一句：
+
+```text
+帮我看看最近 7 天有哪些 Canvas 作业要交。
+```
+
+如果 Claude 能调用 Canvas 工具并返回你的真实课程数据，接入就完成了。
+
+### 5. 自动注册失败时手动添加
+
+最常见的情况是安装 NEU Helper 时 `claude` 还不在 PATH，所以安装器只能跳过 MCP 注册。
+
+先确认：
+
+```bash
+claude --version
+python --version
+```
+
+Windows 上如果 `python` 可用，在 **neu-helper 项目目录**运行：
+
+```powershell
+claude mcp remove canvas -s user
+claude mcp add canvas -s user -- python "$PWD\canvas_mcp.py"
+```
+
+macOS：
+
+```bash
+claude mcp remove canvas -s user
+claude mcp add canvas -s user -- python3 "$(pwd)/canvas_mcp.py"
+```
+
+然后重新检查：
+
+```bash
+claude mcp list
+```
+
+如果 MCP 存在但读不到 Canvas，再检查 Canvas token 是否已经由安装脚本写入：
+
+```text
+~/.canvas-helper/config.json
+```
+
+不要把这个文件贴到 issue、截图或 commit 里，它包含你的 Canvas 凭据。
+
+### 6. `CLAUDE.md` 是干什么的
+
+首次安装会从：
+
+```text
+CLAUDE.example.md
+```
+
+生成本地：
+
+```text
+CLAUDE.md
+```
+
+这里保存的是 NEU Helper 给 Claude 的项目级使用规则，例如：
+
+- 你的课程简称和课程名怎么对应
+- 简报应该关注什么
+- 本地课件应该怎么查
+- 哪些信息必须重新通过 Canvas MCP 获取
+
+**第一次安装后请把课程对照表改成你自己的课程。**
+
+`CLAUDE.md` 不应该包含 Canvas token 或邮箱密码。它的作用是告诉 Claude “怎么理解你的课程环境”，不是当密码保险箱。人类已经发明了足够多种把密钥传上 GitHub 的方式，这个项目没必要再贡献一种。
+
+### Claude 接入实际上分两层
+
+| 层 | 作用 | 没有它会怎样 |
+|---|---|---|
+| **Claude Code CLI** | 运行 AI 对话、简报、邮件分析 | AI 功能不可用，但普通 Canvas 仪表盘仍能用 |
+| **Canvas MCP** | 给 Claude 提供课程、作业、成绩、公告等实时 Canvas 数据 | Claude 能聊天，但查不到你的 Canvas 实时数据 |
+
+所以排障时可以很快判断：
+
+- `claude` 都跑不起来 → 先修 Claude Code 安装 / 登录
+- `claude` 能聊天，但 `/mcp` 没有 `canvas` → 修 MCP 注册
+- `canvas` 在，但工具报认证错误 → 修 Canvas token
+- 仪表盘正常、Claude 也正常，但回答不知道课程简称 → 检查 `CLAUDE.md`
 
 ---
 
