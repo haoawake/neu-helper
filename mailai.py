@@ -225,8 +225,11 @@ def build_prompt(msgs: list[dict], facts, tags) -> str:
         "  · 退订、隐私政策、服务条款、「在浏览器中查看」、社交媒体图标、",
         "    纯跟踪跳转 —— 一条都不要挑",
         "  · 同一个目标出现多次,只挑一条",
-        "  · label 用 2~6 个字说清**点进去是干什么**(「报名表单」「会议链接」",
-        "    「查看成绩」),不要写域名、不要照抄链接文字",
+        "  · label 是**一句话**(10~22 字),说清点进去能干什么、和我有什么关系。",
+        "    像跟人说话那样,别写域名、别照抄链接文字。比如:",
+        "      填这个表报名 Research Rush,9/21 前截止",
+        "      看 CS5800 新发的那次作业",
+        "      改这门课的通知设置",
         "  · 判断标准是上面「我的情况」—— 对我有用才算有用",
         "",
         "**只输出一个 JSON 数组,别的什么都不要**:不要解释、不要 markdown",
@@ -353,7 +356,8 @@ def parse_result(raw: str, n: int, link_counts: list[int] | None = None) -> list
             if not 1 <= k <= have or k in seen:
                 continue
             seen.add(k)
-            picks.append({"n": k, "label": str(p.get("label") or "").strip()[:12]})
+            # 一句话,不是短标签 —— 上限放到 40,够一句中文说清楚了
+            picks.append({"n": k, "label": str(p.get("label") or "").strip()[:40]})
             if len(picks) >= MAX_PICKS:
                 break
         out.append({

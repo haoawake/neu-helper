@@ -1858,6 +1858,25 @@ body[data-mailbox="trash"] .mail-item:hover { opacity: 1; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ll-url:hover { text-decoration: underline; }
+
+/* AI 挑中的链接:一句话在上、地址在下。
+   一句话是主体(和正文一样大、点得动),地址退成小字 —— 它的作用是
+   "点之前知道要去哪儿",不是给人读的。 */
+.mail-linkai { margin: 3px 0 1px; min-width: 0; }
+.la-why {
+  appearance: none; border: 0; background: transparent; padding: 0;
+  display: flex; align-items: baseline; gap: 6px;
+  width: 100%; min-width: 0;
+  font: inherit; font-size: 12px; color: var(--accent-ink);
+  text-align: left; cursor: pointer;
+}
+.la-why:hover { text-decoration: underline; }
+.la-icon { flex: 0 0 auto; font-size: 10px; opacity: .55; }
+.la-url {
+  margin-left: 16px;
+  font-size: 10.5px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .mail-linkmore {
   align-self: flex-start;
   appearance: none; border: 0; background: transparent;

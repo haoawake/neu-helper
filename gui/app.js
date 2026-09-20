@@ -1598,10 +1598,29 @@ function renderMailLinks(links, m, all) {
     rest = links.length - show.length;
   }
   show.forEach((l) => {
+    if (l.ai) {
+      /* AI 挑中的:**一句话在上、地址在下**。
+         一句话("填这个表报名 Research Rush,9/21 前截止")塞不进原来那个
+         130px 的胶囊,而它才是你真正要读的东西 —— 所以让它占一整行,
+         地址退成下面一行小字。地址仍然露出来:点之前得知道要去哪儿。 */
+      const item = el('div', 'mail-linkai');
+      const why = el('button', 'la-why');
+      why.type = 'button';
+      why.appendChild(el('span', 'la-icon', '🔗'));
+      why.appendChild(el('span', null, l.ai));
+      why.title = '打开 ' + l.url;
+      why.addEventListener('click', () => openExternal(l.url));
+      item.appendChild(why);
+      const addr = el('div', 'la-url', l.url.replace(/^https?:\/\//, ''));
+      addr.title = l.url;
+      item.appendChild(addr);
+      box.appendChild(item);
+      return;
+    }
+    // 没挑过的(老结论):保持原来那一行的样子
     const line = el('div', 'mail-linkrow');
     line.appendChild(el('span', 'll-icon', '🔗'));
-    // AI 给的标签优先 —— 它读过正文,比按域名猜准
-    line.appendChild(el('span', 'll-label', l.ai || linkLabel(l)));
+    line.appendChild(el('span', 'll-label', linkLabel(l)));
     const b = el('button', 'll-url');
     b.type = 'button';
     // 地址本身也露出来(去掉协议头,短一点),不然点之前不知道要去哪儿
@@ -1614,7 +1633,11 @@ function renderMailLinks(links, m, all) {
   if (rest > 0) {
     // 措辞分两种:AI 筛过的说"另外 N 条",没筛过的说"还有 N 条" ——
     // 前者是"我替你滤掉了",后者是"这里只是放不下"
-    const more = el('button', 'mail-linkmore' + (picked ? ' is-filtered' : ''),
+    // 弱化只在"上面已经有挑中的链接"时才成立 —— 一条都没挑中的时候,
+    // 这一行是**唯一**的入口,再弱化就等于把链接藏了
+    const onlyWay = picked && show.length === 0;
+    const more = el('button', 'mail-linkmore'
+      + (picked && !onlyWay ? ' is-filtered' : ''),
       picked ? `另外 ${rest} 条链接(AI 认为用不上)` : `还有 ${rest} 条链接`);
     more.type = 'button';
     more.addEventListener('click', (ev) => {
