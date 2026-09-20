@@ -2178,6 +2178,13 @@ function renderUpdate(info, job) {
   const txt = $('updText');
   if (!bar) return;
 
+  // 源码版快进完发现本来就是最新的 —— 说一声就收起来,不留在横幅上
+  if (j.phase === 'done') {
+    bar.classList.remove('is-working');
+    bar.hidden = true;
+    setUpdState(j.msg || '已经是最新的');
+    return;
+  }
   // 正在下载/安装:横幅原地变成进度,不另弹框
   if (j.phase && j.phase !== 'idle' && j.phase !== 'error') {
     bar.hidden = false;
@@ -2242,14 +2249,14 @@ async function checkUpdate() {
 async function applyUpdate() {
   const i = state.upd || {};
   const kind = state.updKind;
-  if (kind === 'git') {
-    window.alert('你这份是 git clone 来的源码版。\n'
-      + '在项目目录跑一句 git pull,然后重开应用就行。');
-    return;
-  }
-  if (!window.confirm(
-    `下载 v${i.latest} 并替换当前版本(约 ${Math.round((i.size || 0) / 1048576)} MB)。\n`
-    + '装好会自动重启。你的邮件、对话、课件、设置都不动。\n\n继续吗?')) return;
+  // 源码版不下 zip,走 git 快进 —— 所以别拿包的大小吓唬人,也别提"替换"
+  const ask = kind === 'git'
+    ? `更新到 v${i.latest}:取最新代码、快进、自动重启。\n`
+      + '你的邮件、对话、课件、CLAUDE.md 都不动(它们不在 git 里)。\n'
+      + '本地改过的文件会被拦下来,不会覆盖。\n\n继续吗?'
+    : `下载 v${i.latest} 并替换当前版本(约 ${Math.round((i.size || 0) / 1048576)} MB)。\n`
+      + '装好会自动重启。你的邮件、对话、课件、设置都不动。\n\n继续吗?';
+  if (!window.confirm(ask)) return;
   try {
     const r = await apiPost('/api/update/apply', {});
     if (!r.ok && r.error) setUpdState(r.error);

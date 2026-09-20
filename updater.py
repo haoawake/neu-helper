@@ -4,7 +4,7 @@
 分两种安装方式,能做的事不一样:
 
   打包版(从 Release 下的)   下载新的 zip -> 解压 -> 换掉 exe -> 重启
-  源码版(git clone 的)      `git pull` 就行,这里只提示、不代劳
+  源码版(git clone 的)      git fetch + merge --ff-only -> 重启
 
 ════════════════════════════════════════════════════════════════════
 **怎么替换一个正在运行的 exe。**
@@ -26,8 +26,14 @@ Windows 不让删正在跑的 exe。常见做法是甩一个 .cmd/.vbs 出去等
 课程表。zip 里本来也没有它们,这里再显式挡一道。
 ════════════════════════════════════════════════════════════════════
 
-macOS 目前**只提示、不代劳**:.app 的替换没法在这台 Windows 上验证,
+源码版走的是另一条路(_run_git),短得多:快进到 origin 上的那个提交,
+然后重启。**不 stash、不 reset、不 checkout** —— 只做快进这一种操作。
+改动过的文件、和远端分叉了的提交,一律停下来照实说,而不是替用户做决定
+把他的东西弄丢。`data/` 和 `CLAUDE.md` 在 .gitignore 里,git 本来就不碰。
+
+macOS 的**打包版**目前只提示、不代劳:.app 的替换没法在这台 Windows 上验证,
 拿没验过的代码去动别人的安装目录不合适。点"更新"会打开下载页。
+源码版在 macOS 上没这个问题 —— git 是 git。
 """
 from __future__ import annotations
 
@@ -45,6 +51,7 @@ from pathlib import Path
 
 import platform_id
 import version as ver
+from desktop import NO_WINDOW as _NO_WINDOW   # 起子进程不闪黑框
 
 # 检查更新的间隔。**不要更频繁** —— GitHub 对未认证请求是每小时 60 次,
 # 而且这事一天知道一次就够了
@@ -72,9 +79,9 @@ def _asset_name() -> str:
 def install_kind(here: Path) -> str:
     """这是怎么装的。
 
-    packaged  从 Release 下的打包版(能自己更新)
-    git       git clone 的源码版(提示用 git pull)
-    source    源码但没有 .git(只能提示去下载)
+    packaged  从 Release 下的打包版(下新 zip 换 exe)
+    git       git clone 的源码版(fetch + merge --ff-only)
+    source    源码但没有 .git(无从更新起,只能提示去下载)
     """
     if getattr(sys, "frozen", False):
         return "packaged"
@@ -161,6 +168,108 @@ class Updater:
         threading.Thread(target=self._run, args=(url,), daemon=True,
                          name="update").start()
         return True
+
+    # ─────────────────── 源码版:快进到最新提交 ───────────────────
+
+    def start_git(self) -> bool:
+        """源码版的更新。和打包版是两条完全不同的路,所以分开一个入口。"""
+        if not self._lock.acquire(blocking=False):
+            return False
+        self._set(phase="checking", pct=0, msg="正在检查工作区…", error="")
+        threading.Thread(target=self._run_git, daemon=True,
+                         name="update-git").start()
+        return True
+
+    def _git(self, *args: str, timeout: int = 120, raw: bool = False):
+        """跑一条 git。返回 (退出码, 输出)。
+
+        默认把 stdout 和 stderr 拼起来再 strip —— 报错信息要的是这个。
+
+        **但 `status --porcelain` 必须传 raw=True。** 它的第一列是"暂存区
+        状态",没暂存的改动那一列**就是个空格**(` M server.py`),strip 会把
+        它吃掉,于是按固定宽度切出来的文件名少一个字符,界面上显示成
+        「本地改过这些文件:erver.py」。测试逮到过一次。
+        """
+        p = subprocess.run(
+            [self._git_exe, *args], cwd=str(self.here), capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=timeout,
+            creationflags=_NO_WINDOW)
+        if raw:
+            return p.returncode, (p.stdout or "")
+        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+
+    def _run_git(self) -> None:
+        try:
+            self._git_exe = shutil.which("git")
+            if not self._git_exe:
+                raise RuntimeError("PATH 上找不到 git —— 装一个,或者去下载页手动更新")
+
+            # 工作区有改动就停下。**只看被跟踪的文件** —— 多一个没加进 git
+            # 的临时文件不该挡着更新,而改过的源码一旦被覆盖就找不回来了。
+            code, out = self._git("status", "--porcelain", raw=True)
+            if code != 0:
+                raise RuntimeError("这好像不是个 git 仓库 —— 更新不了,"
+                                   "去下载页拿打包版吧")
+            dirty = [ln[3:] for ln in out.splitlines() if ln[:2] != "??"]
+            if dirty:
+                raise RuntimeError(
+                    "本地改过这些文件,先自己提交或撤销再更新:"
+                    + "、".join(dirty[:4]) + ("…" if len(dirty) > 4 else ""))
+
+            code, upstream = self._git("rev-parse", "--abbrev-ref",
+                                       "--symbolic-full-name", "@{u}")
+            if code != 0:
+                raise RuntimeError("当前分支没有对应的远端分支,不知道该跟谁更新")
+            remote = upstream.split("/")[0]
+
+            self._set(phase="fetching", msg="正在取最新代码…")
+            code, out = self._git("fetch", "--tags", remote)
+            if code != 0:
+                raise RuntimeError(f"git fetch 失败:{out[:200]}")
+
+            code, behind = self._git("rev-list", "--count", f"HEAD..{upstream}")
+            code2, ahead = self._git("rev-list", "--count", f"{upstream}..HEAD")
+            if code == 0 and behind == "0":
+                self._set(phase="idle", msg="", error="")
+                self._set(phase="done", msg="已经是最新的代码了")
+                return
+            if code2 == 0 and ahead not in ("0", ""):
+                # 本地有没推上去的提交 —— 快进不了。**不碰它**,
+                # 硬来的话用户自己的提交就没了
+                raise RuntimeError(
+                    f"本地有 {ahead} 个提交还没推上去,和远端分叉了 —— "
+                    f"先 git push 或者 rebase,这里只做快进")
+
+            self._set(phase="applying", msg=f"正在快进 {behind} 个提交…")
+            code, out = self._git("merge", "--ff-only", upstream)
+            if code != 0:
+                raise RuntimeError(f"快进失败:{out[:300]}")
+
+            self._set(phase="restarting", msg="代码换好了,正在重启…")
+            self._respawn()
+            time.sleep(1.0)
+            os._exit(0)
+        except Exception as exc:                   # noqa: BLE001
+            self._set(phase="error", error=f"{type(exc).__name__}: {exc}"[:300])
+        finally:
+            try:
+                self._lock.release()
+            except RuntimeError:
+                pass
+
+    def _respawn(self) -> None:
+        """用当前这个解释器把 app.py 再起一份。
+
+        **带 --after-update**:新进程会多等一会儿单实例那把锁 —— 本进程
+        还在收尾,锁没松开,不等的话新进程会判定"已经有一个在跑"然后退出,
+        用户看到的就是"点了更新,应用没了"。打包版那条路踩过这个坑。
+        """
+        entry = self.here / "app.py"
+        subprocess.Popen([sys.executable, str(entry), "--after-update"],
+                         cwd=str(self.here), close_fds=True,
+                         creationflags=_NO_WINDOW)
+
+    # ─────────────────── 打包版:换 exe ───────────────────
 
     def _run(self, url: str) -> None:
         try:

@@ -1738,18 +1738,29 @@ def api_update_check():
 
 @app.post("/api/update/apply")
 def api_update_apply():
-    """下载并装上。打包版才做得了 —— 别的情况把下载页打开。"""
+    """下载并装上。两种安装方式两条路,都是自动的。
+
+    packaged  下载新 zip -> 换 exe -> 重启
+    git       fetch + merge --ff-only -> 重启(不碰 data/ 和 CLAUDE.md,
+              它们在 .gitignore 里)
+
+    只有"源码但没有 .git"和 macOS 打包版还得手动 —— 前者无从更新起,
+    后者的 .app 替换没在真机上验证过。
+    """
     info = backend.update_info or {}
     kind = updater.install_kind(HERE)
+    if kind == "git":
+        started = backend.updater.start_git()
+        return jsonify({"ok": started, "kind": kind,
+                        "job": backend.updater.snapshot()})
     if kind != "packaged" or platform_id.IS_MAC:
-        # 源码版该 git pull;macOS 的 .app 替换没验证过,不拿它做实验
         if info.get("page"):
             webbrowser.open(info["page"])
         return jsonify({"ok": False, "opened": True, "kind": kind,
-                        "error": "git pull 一下就行" if kind == "git"
-                                 else "这种安装方式要手动更新,已经打开下载页"})
+                        "error": "这种安装方式要手动更新,已经打开下载页"})
     started = backend.updater.start(info.get("asset") or "")
-    return jsonify({"ok": started, "job": backend.updater.snapshot()})
+    return jsonify({"ok": started, "kind": kind,
+                    "job": backend.updater.snapshot()})
 
 
 @app.post("/api/toast/test")
