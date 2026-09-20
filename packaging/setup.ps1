@@ -29,6 +29,31 @@ $here = $PSScriptRoot
 $exe = Join-Path $here "NEU Helper.exe"
 $mcpExe = Join-Path $here "canvas-mcp.exe"
 
+function Native {
+    <#
+        Run a native .exe and capture output + exit code.
+
+        PS 5.1 wraps each stderr line from a native command in an ErrorRecord.
+        Under $ErrorActionPreference='Stop' that aborts the whole script even
+        when the exe exited 0 -- and even when the message is entirely benign.
+
+        This bit us for real: on a fresh machine `claude mcp remove canvas`
+        prints "No MCP server named canvas in user scope" (correct -- there
+        isn't one yet), and setup died right there, before registering MCP,
+        making the shortcuts, or creating CLAUDE.md.
+
+        So: drop to 'Continue' around the call, and judge success by
+        $LASTEXITCODE instead of by whether anything reached stderr.
+    #>
+    param([string]$File, [string[]]$ArgList)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = (& $File @ArgList 2>&1 | Out-String)
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    return [pscustomobject]@{ Out = $out.Trim(); Code = $code }
+}
+
 function Ok($m)   { Write-Host "    OK   $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "    WARN $m" -ForegroundColor Yellow }
 function Fail($m) { Write-Host "    FAIL $m" -ForegroundColor Red }
@@ -83,9 +108,9 @@ $json = @{ token = $Token; base_url = $BaseUrl } | ConvertTo-Json
 # Grant by SID, not by name: when the machine name equals the user name,
 # "$env:USERNAME:(R,W)" is read as a domain prefix and grants nothing.
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-& icacls.exe $cfgFile /inheritance:r /grant:r "*${sid}:(R,W)" | Out-Null
-if ($LASTEXITCODE -eq 0) { Ok "token -> $cfgFile (readable only by you)" }
-else { Warn "token written, but locking down its permissions failed" }
+$acl = Native "icacls.exe" @($cfgFile, "/inheritance:r", "/grant:r", "*${sid}:(R,W)")
+if ($acl.Code -eq 0) { Ok "token -> $cfgFile (readable only by you)" }
+else { Warn "token written, but locking down its permissions failed: $($acl.Out)" }
 
 # ---------------------------------------------------------------- 2. MCP
 Step 2 "Registering the canvas MCP server with Claude Code"
@@ -100,11 +125,13 @@ if (-not $claude) {
     Warn "claude CLI not found. The dashboard and mailbox still work, but the"
     Warn "daily briefing and the chat need it: https://claude.com/claude-code"
 } else {
-    & $claude mcp remove canvas -s user 2>&1 | Out-Null
+    # Clearing an earlier registration: on a fresh machine there is none, and
+    # claude says so on stderr. That is not a failure -- ignore the result.
+    Native $claude @("mcp", "remove", "canvas", "-s", "user") | Out-Null
     # Point at the bundled exe -- this build has no Python to run canvas_mcp.py
-    & $claude mcp add canvas -s user -- $mcpExe 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Ok "MCP server 'canvas' -> canvas-mcp.exe" }
-    else { Warn "claude mcp add failed; register it by hand if you want MCP" }
+    $add = Native $claude @("mcp", "add", "canvas", "-s", "user", "--", $mcpExe)
+    if ($add.Code -eq 0) { Ok "MCP server 'canvas' -> canvas-mcp.exe" }
+    else { Warn "claude mcp add failed: $($add.Out)" }
 }
 
 # ---------------------------------------------------------------- 3. config
@@ -169,14 +196,11 @@ Step 5 "Verifying"
 # stdin, expect a JSON-RPC result back. It exits by itself when stdin closes,
 # so nothing is left running. (There is no --selftest flag; it is a stdio
 # server, and calling it with a flag would just block waiting for input.)
+#
+# The server writes progress notes to stderr, so this needs the same
+# 'Continue' treatment as Native above -- see the comment there.
 $init = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"setup","version":"1"}}}'
 $whoami = '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"canvas_whoami","arguments":{}}}'
-
-# The server writes progress notes to stderr. Two reasons to swallow them here:
-# they are noise in an installer log, and PowerShell 5.1 wraps native stderr in
-# ErrorRecords -- with $ErrorActionPreference = "Stop" that aborts the script on
-# a line that is not even an error. So relax the preference and send stderr to
-# $null for these two calls only.
 $prev = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 $reply = $init | & $mcpExe 2>$null
