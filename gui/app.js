@@ -1972,10 +1972,13 @@ function renderAiBar() {
   const err = (a.errors || [])[a.errors ? a.errors.length - 1 : 0];
   if (a.running) {
     bar.textContent = `AI 正在过目 ${a.done}/${a.total} 封`
-      + (a.cost ? ` · 本轮 $${a.cost}` : '');
+      + (a.cost ? ` · 累计 $${a.cost}` : '');
     bar.hidden = false;
   } else if (err) {
-    bar.textContent = '过目失败:' + err;
+    // errors 每一轮开始时会清空,所以这条一定是**最近那一轮**的。
+    // 还有待办就提一句可以再催 —— 偶发的解析失败重试一次多半就过了。
+    bar.textContent = '过目失败:' + err
+      + (a.pending ? ` —— 还有 ${a.pending} 封没过目,设置 → 邮箱可以再催一次` : '');
     bar.hidden = false;
   } else if (a.pending) {
     bar.textContent = `还有 ${a.pending} 封没过目 —— 设置 → 邮箱可以手动催一下`;
@@ -3832,7 +3835,7 @@ function renderAiState() {
   box.textContent = a.running
     ? `过目中 ${a.done}/${a.total} · $${a.cost || 0}`
     : `已过目 ${a.analyzed} 封` + (a.pending ? ` · 还差 ${a.pending}` : '')
-      + (a.cost ? ` · 本轮 $${a.cost}` : '');
+      + (a.cost ? ` · 累计 $${a.cost}` : '');
 }
 
 function setTextIfIdle(id, v) {
