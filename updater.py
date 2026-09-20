@@ -1,0 +1,356 @@
+# -*- coding: utf-8 -*-
+"""检查更新 / 下载 / 就地替换。
+
+分两种安装方式,能做的事不一样:
+
+  打包版(从 Release 下的)   下载新的 zip -> 解压 -> 换掉 exe -> 重启
+  源码版(git clone 的)      `git pull` 就行,这里只提示、不代劳
+
+════════════════════════════════════════════════════════════════════
+**怎么替换一个正在运行的 exe。**
+
+Windows 不让删正在跑的 exe。常见做法是甩一个 .cmd/.vbs 出去等进程退出再拷,
+但那会闪一个黑框,而且脚本本身还得自己清理。
+
+这里用另一个办法:**让新版的 exe 自己来装自己**。
+
+  1. 下载 zip,解压到 data/update/staged/
+  2. 起 `staged/NEU Helper.exe --apply-update <装在哪> <当前进程的 pid>`
+  3. 本进程退出
+  4. 那个新进程等旧进程死掉,把 staged 里的东西拷过去,再把装好的那个拉起来
+
+新版的 exe 是 onefile 的、自带全部依赖,所以它在 staged 里就能独立跑 ——
+不需要任何外部脚本。app.py 在最开头就会认这个参数,不会去开窗口。
+
+**data/ 和 CLAUDE.md 不动。** 前者是你的邮件、对话、课件;后者是你自己的
+课程表。zip 里本来也没有它们,这里再显式挡一道。
+════════════════════════════════════════════════════════════════════
+
+macOS 目前**只提示、不代劳**:.app 的替换没法在这台 Windows 上验证,
+拿没验过的代码去动别人的安装目录不合适。点"更新"会打开下载页。
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import zipfile
+from pathlib import Path
+
+import platform_id
+import version as ver
+
+# 检查更新的间隔。**不要更频繁** —— GitHub 对未认证请求是每小时 60 次,
+# 而且这事一天知道一次就够了
+CHECK_EVERY = 6 * 3600
+TIMEOUT = 20
+
+# 装好之后**绝对不能被更新覆盖**的东西 —— 这些是"你的",不是"程序的"。
+# zip 里本来就没有它们,这里是第二道闸。
+#
+#   顶层的按名字挡(下面循环比的就是顶层名字)
+KEEP = {"data", "CLAUDE.md"}
+#   目录里面的按相对路径挡。copytree 是合并式的,所以光靠 KEEP 挡不住
+#   ——必须在 copytree 的时候显式跳过
+KEEP_INSIDE = {(".claude", "settings.local.json")}
+
+
+def _asset_name() -> str:
+    """本平台该下哪个附件。"""
+    if platform_id.IS_MAC:
+        import platform
+        return f"NEU-Helper-mac-{platform.machine()}.zip"
+    return "NEU-Helper-win-x64.zip"
+
+
+def install_kind(here: Path) -> str:
+    """这是怎么装的。
+
+    packaged  从 Release 下的打包版(能自己更新)
+    git       git clone 的源码版(提示用 git pull)
+    source    源码但没有 .git(只能提示去下载)
+    """
+    if getattr(sys, "frozen", False):
+        return "packaged"
+    return "git" if (here / ".git").is_dir() else "source"
+
+
+# ─────────────────────────── 查 ───────────────────────────
+
+
+def check() -> dict:
+    """问一下 GitHub 有没有新版本。
+
+    只读公开的 Releases 接口,不带任何凭据 —— 但**这会把你的 IP 告诉
+    GitHub**,所以设置里能关掉(prefs.updateCheck)。
+    """
+    url = f"https://api.github.com/repos/{ver.REPO}/releases/latest"
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": f"NEUHelper/{ver.VERSION}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            d = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "error": f"GitHub 返回 {e.code}"}
+    except Exception as exc:                       # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    tag = str(d.get("tag_name") or "")
+    want = _asset_name()
+    asset = next((a for a in (d.get("assets") or [])
+                  if a.get("name") == want), None)
+    return {
+        "ok": True,
+        "current": ver.VERSION,
+        "latest": tag.lstrip("vV"),
+        "newer": ver.is_newer(tag),
+        "notes": (d.get("body") or "")[:4000],
+        "page": d.get("html_url") or "",
+        "asset": (asset or {}).get("browser_download_url") or "",
+        "size": (asset or {}).get("size") or 0,
+        "published": (d.get("published_at") or "")[:10],
+        "checked": time.strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+# ─────────────────────────── 下 + 换 ───────────────────────────
+
+
+class Updater:
+    """一次更新的全过程。状态给界面看。"""
+
+    def __init__(self, here: Path, on_event=None):
+        self.here = Path(here)
+        self.on_event = on_event
+        self.state = {"phase": "idle", "pct": 0, "msg": "", "error": ""}
+        self._lock = threading.Lock()
+
+    def snapshot(self) -> dict:
+        return dict(self.state)
+
+    def _set(self, **kw) -> None:
+        self.state.update(kw)
+        if self.on_event:
+            try:
+                self.on_event(self.snapshot())
+            except Exception:                      # noqa: BLE001
+                pass
+
+    def start(self, url: str) -> bool:
+        """开始下载并安装。返回有没有真的开跑。"""
+        if not url:
+            self._set(phase="error", error="这个版本没有本平台的安装包")
+            return False
+        if platform_id.IS_MAC:
+            # 没在真机上验证过替换 .app 的流程,不拿别人的安装目录做实验
+            self._set(phase="error",
+                      error="macOS 暂时只能手动更新 —— 已经帮你打开下载页")
+            return False
+        if not self._lock.acquire(blocking=False):
+            return False
+        self._set(phase="downloading", pct=0, msg="正在下载…", error="")
+        threading.Thread(target=self._run, args=(url,), daemon=True,
+                         name="update").start()
+        return True
+
+    def _run(self, url: str) -> None:
+        try:
+            work = self.here / "data" / "update"
+            shutil.rmtree(work, ignore_errors=True)
+            work.mkdir(parents=True, exist_ok=True)
+            zp = work / "pkg.zip"
+            self._download(url, zp)
+
+            self._set(phase="extracting", pct=100, msg="正在解压…")
+            staged = work / "staged"
+            with zipfile.ZipFile(zp) as z:
+                # zip 里是一层 "NEU Helper/" 目录
+                z.extractall(work / "raw")
+            roots = [p for p in (work / "raw").iterdir() if p.is_dir()]
+            src = roots[0] if len(roots) == 1 else (work / "raw")
+            shutil.move(str(src), str(staged))
+
+            exe = staged / "NEU Helper.exe"
+            if not exe.is_file():
+                raise RuntimeError("下载的包里没有 NEU Helper.exe —— 不敢装")
+
+            self._set(phase="applying", msg="正在替换,马上会重启…")
+            # 让**新版的 exe** 自己来装自己(理由见模块文档)
+            subprocess.Popen(
+                [str(exe), "--apply-update", str(self.here), str(os.getpid())],
+                cwd=str(staged), close_fds=True)
+            time.sleep(1.2)
+            self._set(phase="restarting", msg="正在重启…")
+            # 主窗口关掉,进程退出 —— 新进程在等这一刻
+            os._exit(0)
+        except Exception as exc:                   # noqa: BLE001
+            self._set(phase="error", error=f"{type(exc).__name__}: {exc}"[:300])
+        finally:
+            try:
+                self._lock.release()
+            except RuntimeError:
+                pass
+
+    def _download(self, url: str, dst: Path) -> None:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": f"NEUHelper/{ver.VERSION}"})
+        with urllib.request.urlopen(req, timeout=60) as r, dst.open("wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            got = 0
+            last = 0.0
+            while chunk := r.read(1 << 18):
+                f.write(chunk)
+                got += len(chunk)
+                # 别每个块都推一次事件 —— 50MB 的包会推几百次
+                if total and time.time() - last > 0.4:
+                    last = time.time()
+                    self._set(phase="downloading", pct=int(got * 100 / total),
+                              msg=f"正在下载 {got // 1048576}/{total // 1048576} MB")
+        if total and dst.stat().st_size != total:
+            raise RuntimeError("下载不完整,没装")
+
+
+# ─────────────────── 新版 exe 的"装自己"模式 ───────────────────
+
+
+def apply_update(target: Path, wait_pid: int) -> int:
+    """在**新版的 exe** 里跑:等旧进程退出,把自己这一份拷过去,再启动它。
+
+    app.py 在最开头就会把 `--apply-update` 交到这里,所以这个模式下
+    不会起服务、不会开窗口。
+    """
+    target = Path(target)
+    staged = Path(sys.executable).resolve().parent
+    log = target / "data" / "update.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    def say(m: str) -> None:
+        line = f"[{time.strftime('%H:%M:%S')}] {m}"
+        try:
+            with log.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:                          # noqa: BLE001
+            pass
+        print(line, file=sys.stderr, flush=True)
+
+    say(f"准备把 {staged} 装到 {target},等 pid {wait_pid} 退出")
+    for _ in range(300):                           # 最多等 30 秒
+        if not _alive(wait_pid):
+            break
+        time.sleep(0.1)
+    else:
+        say("旧进程一直没退出,放弃(什么都没改)")
+        return 1
+    time.sleep(0.8)                                # 给它一点时间松开文件句柄
+
+    copied, failed = [], []
+    for item in staged.iterdir():
+        rel = item.name
+        if rel in KEEP or rel == "pkg.zip":
+            continue
+        dst = target / rel
+        # 换文件时"被占用"是这类操作最典型的偶发失败 —— 旧进程刚退出,
+        # 系统可能还没松开它的镜像文件。重试几次基本都能过去。
+        for attempt in range(6):
+            try:
+                if item.is_dir():
+                    # 合并式拷贝,但把 KEEP_INSIDE 里那些跳过 —— 比如
+                    # .claude/settings.local.json 是你的权限设置,不是程序的
+                    skip = {f for d, f in KEEP_INSIDE if d == rel}
+                    shutil.copytree(item, dst, dirs_exist_ok=True,
+                                    ignore=lambda _d, names: skip & set(names))
+                else:
+                    # 正在跑的 exe 删不掉,但**改名可以** —— 先挪开再拷新的。
+                    # 留着 .old 是为了拷失败时还能退回去。
+                    if dst.exists():
+                        old = dst.with_suffix(dst.suffix + ".old")
+                        old.unlink(missing_ok=True)
+                        dst.rename(old)
+                    shutil.copy2(item, dst)
+                copied.append(rel)
+                break
+            except Exception as exc:               # noqa: BLE001
+                if attempt < 5:
+                    time.sleep(0.6)
+                    continue
+                failed.append(f"{rel}: {exc}")
+                say(f"!! 拷 {rel} 失败(试了 6 次):{exc}")
+
+    if failed:
+        # 有东西没拷成:把改了名的退回去,别留一个半新半旧的安装
+        say("有文件没拷成,回滚")
+        for rel in copied:
+            old = (target / rel).with_suffix(Path(rel).suffix + ".old")
+            if old.exists():
+                (target / rel).unlink(missing_ok=True)
+                old.rename(target / rel)
+        say("回滚完成,启动原来那个版本")
+    else:
+        say(f"装好了:{len(copied)} 项")
+        # **清理 .old 必须是"尽力而为"。** 那个文件是刚刚退出的那个进程的
+        # 镜像,Windows 往往还锁着它几秒 —— 在这儿抛异常的后果是:文件明明
+        # 都换好了,退出码却变成 1、还记一条未捕获异常。删不掉不要紧,
+        # 应用下次启动会顺手清(见 app.py 的 _sweep_old)。
+        for rel in copied:
+            old = (target / rel).with_suffix(Path(rel).suffix + ".old")
+            try:
+                old.unlink(missing_ok=True)
+            except OSError:
+                say(f"({old.name} 还被锁着,留给下次启动清)")
+
+    # **这一步绝对不能抛异常。** 文件这时候已经换好了 —— 再炸一次的话
+    # 用户得到的是"更新完但应用没起来,而且屏幕上什么都没有"。
+    # 起不来就把原因写进日志,让人还能自己双击。
+    exe = target / "NEU Helper.exe"
+    try:
+        if exe.is_file():
+            say("启动 " + str(exe))
+            # 带上 --after-update:新进程会多等一会儿单实例的锁,
+            # 而不是撞见"已经有一个在跑"就立刻退出(那样用户看到的是
+            # "点了更新,应用就没了")
+            subprocess.Popen([str(exe), "--after-update"],
+                             cwd=str(target), close_fds=True)
+        else:
+            say("!! 装完之后找不到 NEU Helper.exe")
+    except Exception as exc:                       # noqa: BLE001
+        say(f"!! 起不来({type(exc).__name__}: {exc})—— 手动双击一下")
+    return 0 if not failed else 1
+
+
+def _alive(pid: int) -> bool:
+    """这个进程还活着吗。
+
+    **不能只看 OpenProcess 成不成功。** 进程已经死了、但还有人持有它的句柄
+    时(比如启动它的那个进程还没关掉 handle),OpenProcess 照样成功 ——
+    于是"等它退出"会一直等到超时,更新就白等一场。踩过一次:实测杀掉旧进程
+    之后日志仍然写着"旧进程一直没退出,放弃"。
+
+    看退出码才准:还在跑的进程退出码是 STILL_ACTIVE(259)。
+    """
+    if pid <= 0:
+        return False
+    if platform_id.IS_WIN:
+        import ctypes
+        STILL_ACTIVE = 259
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, int(pid))   # QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong(0)
+        got = k.GetExitCodeProcess(h, ctypes.byref(code))
+        k.CloseHandle(h)
+        return bool(got) and code.value == STILL_ACTIVE
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False

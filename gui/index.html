@@ -65,6 +65,14 @@
   <section class="pane pane-data" id="paneData">
 
    <div id="dashView">
+    <!-- 有新版本。**不和 #banner 共用** —— 那个是仪表盘报错的位置、
+         每次刷新都会被清掉;这条要一直挂着,直到你更新或者点掉 -->
+    <div id="updBar" class="upd-bar" hidden>
+      <span id="updText" class="upd-text"></span>
+      <button type="button" class="upd-go" id="updGo">更新</button>
+      <button type="button" class="upd-what" id="updWhat">改了什么</button>
+      <button type="button" class="upd-x" id="updLater" title="这次先不提">✕</button>
+    </div>
     <div id="banner" class="banner" hidden></div>
     <div id="overdueAlert" class="alert" hidden></div>
 
@@ -447,6 +455,22 @@
           <div class="pref-row pref-row-btns">
             <button class="btn btn-quiet" id="btnOpenData">打开数据目录</button>
             <button class="btn btn-quiet" id="btnOpenStartup">打开启动文件夹</button>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>版本</h4>
+          <div class="pref-row">
+            <label class="pref-label" for="swUpdateCheck"
+                   title="每 6 小时问一次 GitHub 有没有新版本。会把你的 IP 告诉 GitHub">自动检查更新</label>
+            <button class="switch" id="swUpdateCheck" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnUpdCheck">现在检查</button>
+            <button class="btn btn-quiet" id="btnUpdGo" hidden>下载并更新</button>
+            <span class="muted" id="updState"></span>
           </div>
         </section>
       </div>

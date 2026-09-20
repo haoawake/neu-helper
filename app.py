@@ -28,6 +28,24 @@ else:
 LOG = HERE / "data" / "app.log"
 
 
+def _maybe_apply_update() -> int | None:
+    """`--apply-update <装在哪> <旧进程 pid>`:这一份是**新版的 exe**,
+    它的任务是把自己拷到安装目录再把那边拉起来,然后退出。
+
+    **必须在最前面处理** —— 这个模式下不能起服务、不能抢单实例的锁、
+    更不能开窗口。判断只看 argv,不 import 任何重东西。
+    """
+    if "--apply-update" not in sys.argv:
+        return None
+    i = sys.argv.index("--apply-update")
+    try:
+        target, pid = sys.argv[i + 1], int(sys.argv[i + 2])
+    except (IndexError, ValueError):
+        return 2
+    import updater
+    return updater.apply_update(Path(target), pid)
+
+
 def _ensure_streams() -> None:
     """pythonw.exe 下 sys.stdout / sys.stderr 是 None。
 
@@ -163,7 +181,7 @@ def setup_orb() -> None:
         log("信息弹窗没装上:" + chr(10) + traceback.format_exc(limit=3))
 
 
-def already_running() -> bool:
+def already_running(after_update: bool = False) -> bool:
     """已经有一个在跑吗?有就把那个窗口叫到前面来,然后让这次启动退掉。
 
     两个平台都选了"进程死了锁自动释放"的机制(Windows 命名互斥体、
@@ -175,6 +193,17 @@ def already_running() -> bool:
     """
     if desktop.acquire_single_instance("NEUHelper"):
         return False
+    # **更新之后重启要多等一会儿。** 刚被替换掉的那个进程可能还在收尾,
+    # 锁还没松开 —— 这时候直接判定"已经有一个在跑"然后退出,用户看到的是
+    # "点了更新,然后应用就没了"。踩过一次,所以这里要重试。
+    if after_update:
+        for _ in range(40):                        # 最多 20 秒
+            time.sleep(0.5)
+            if desktop.acquire_single_instance("NEUHelper"):
+                log("更新后重启:等到锁释放了")
+                return False
+        log("更新后重启:等了 20 秒锁还占着,放弃")
+        return True
     log("已经有一个实例在跑,把它的窗口叫到前面")
     try:
         desktop.raise_existing(TITLE)
@@ -183,8 +212,46 @@ def already_running() -> bool:
     return True
 
 
+def _sweep_old() -> None:
+    """清掉更新留下的 *.old(一个 44MB 的旧 exe,留着白占地方)。
+
+    更新时旧的 exe 会先被改名成 .old 再拷新的。刚重启那会儿系统往往**还锁着
+    它**(它是上一秒才退出那个进程的镜像),所以第一下删不掉。
+
+    所以在后台隔一会儿再试几次,而不是只试一次就留到下次启动 ——
+    实测重启后立刻删是失败的,几秒之后就能删掉。全都失败也无所谓:
+    下次启动还会再来一轮。
+    """
+    def sweep() -> bool:
+        left = list(HERE.glob("*.old"))
+        for p in left:
+            try:
+                p.unlink()
+                log(f"清掉更新残留 {p.name}")
+            except OSError:
+                return False
+        return True
+
+    def later() -> None:
+        for wait in (0, 4, 15, 45):
+            time.sleep(wait)
+            try:
+                if sweep():
+                    return
+            except Exception:
+                return
+
+    threading.Thread(target=later, daemon=True, name="sweepold").start()
+
+
 def main() -> int:
-    if already_running():
+    code = _maybe_apply_update()
+    if code is not None:
+        return code
+    # 清理放在单实例判断**之前** —— 撞上"已经有一个在跑"就直接退的话,
+    # 那个 44MB 的残留永远没人清
+    _sweep_old()
+    if already_running(after_update="--after-update" in sys.argv):
         return 0
     if not (server.GUI / "index.html").exists():
         log(f"缺少前端文件: {server.GUI / 'index.html'}")
@@ -216,6 +283,9 @@ def main() -> int:
     server.backend.mail_idle.start()
     log("邮箱 IDLE 监听已启动")
     log("邮箱调度已启动")
+
+    # 检查更新。开机等一会儿再查 —— 启动那几秒要留给窗口和仪表盘
+    server.backend.start_update_watch()
 
     threading.Thread(target=setup_orb, daemon=True).start()
 

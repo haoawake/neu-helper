@@ -1649,6 +1649,101 @@ function renderMailLinks(links, m, all) {
   return box;
 }
 
+/* ── 更新 ──
+
+   这条横幅**不复用 #banner**:那个是仪表盘报错的位置、每次刷新会被清掉,
+   而"有新版本"应该一直挂着直到你处理它。 */
+
+function renderUpdate(info, job) {
+  state.upd = info || state.upd || {};
+  state.updJob = job || state.updJob || {};
+  const i = state.upd;
+  const j = state.updJob;
+  const bar = $('updBar');
+  const txt = $('updText');
+  if (!bar) return;
+
+  // 正在下载/安装:横幅原地变成进度,不另弹框
+  if (j.phase && j.phase !== 'idle' && j.phase !== 'error') {
+    bar.hidden = false;
+    bar.classList.add('is-working');
+    txt.textContent = (j.msg || '正在更新…')
+      + (j.phase === 'downloading' && j.pct ? ` ${j.pct}%` : '');
+    setUpdState(txt.textContent);
+    return;
+  }
+  bar.classList.remove('is-working');
+  if (j.phase === 'error' && j.error) {
+    bar.hidden = false;
+    txt.textContent = '更新没成功:' + j.error;
+    setUpdState(txt.textContent);
+    return;
+  }
+
+  const show = i.newer && state.updDismissed !== i.latest;
+  bar.hidden = !show;
+  if (show) {
+    txt.textContent = `有新版本 v${i.latest}`
+      + (i.published ? `(${i.published})` : '')
+      + ` —— 你现在是 v${i.current}`;
+  }
+  setUpdState(i.newer
+    ? `有新版本 v${i.latest}`
+    : (i.latest ? `已经是最新的(v${i.current})` : ''));
+  const go = $('btnUpdGo');
+  if (go) go.hidden = !i.newer;
+}
+
+function setUpdState(t) {
+  const box = $('updState');
+  if (box) box.textContent = t || '';
+}
+
+async function loadUpdate() {
+  try {
+    const d = await apiGet('/api/update');
+    state.updKind = d.kind;
+    renderUpdate(d.info || {}, d.job || {});
+    if (!(d.info || {}).latest) setUpdState(`当前 v${d.version}`);
+  } catch (e) { /* 查不到就算了,不是错误 */ }
+}
+
+async function checkUpdate() {
+  setUpdState('正在问 GitHub…');
+  try {
+    const d = await apiPost('/api/update/check', {});
+    state.updKind = d.kind;
+    // 手动点了「现在检查」就别再被"这次先不提"挡着
+    state.updDismissed = '';
+    renderUpdate(d.info || {}, {});
+    if (!(d.info || {}).ok && (d.info || {}).error) {
+      setUpdState('查不到:' + d.info.error);
+    }
+  } catch (e) {
+    setUpdState('查不到:' + ((e && e.message) || e));
+  }
+}
+
+async function applyUpdate() {
+  const i = state.upd || {};
+  const kind = state.updKind;
+  if (kind === 'git') {
+    window.alert('你这份是 git clone 来的源码版。\n'
+      + '在项目目录跑一句 git pull,然后重开应用就行。');
+    return;
+  }
+  if (!window.confirm(
+    `下载 v${i.latest} 并替换当前版本(约 ${Math.round((i.size || 0) / 1048576)} MB)。\n`
+    + '装好会自动重启。你的邮件、对话、课件、设置都不动。\n\n继续吗?')) return;
+  try {
+    const r = await apiPost('/api/update/apply', {});
+    if (!r.ok && r.error) setUpdState(r.error);
+    renderUpdate(state.upd, r.job || {});
+  } catch (e) {
+    setUpdState('没跑起来:' + ((e && e.message) || e));
+  }
+}
+
 /* ── 单封视图 ──
 
    占满左栏,右栏的对话不受影响:只是把 #paneMail 里列表那几块藏掉
@@ -3060,6 +3155,10 @@ function handleWindowEvent(ev) {
     renderSyncState(ev.sync || {});
     return;
   }
+  if (ev.kind === 'update') {
+    renderUpdate(ev.info || {}, ev.job || {});
+    return;
+  }
   if (ev.kind === 'mail') {
     renderMailState(ev.mail || {});
     // 有新邮件进来就把列表刷一下(在邮箱页的时候)
@@ -4083,6 +4182,20 @@ function wirePrefs() {
     apiPost('/api/reveal', { what: 'downloads' }).catch(() => {});
   });
 
+  $('btnUpdCheck').addEventListener('click', () => checkUpdate());
+  $('btnUpdGo').addEventListener('click', () => applyUpdate());
+  $('updGo').addEventListener('click', () => applyUpdate());
+  $('updWhat').addEventListener('click', () => {
+    const i = state.upd || {};
+    if (i.page) openExternal(i.page);
+  });
+  $('updLater').addEventListener('click', () => {
+    // 只是"这次先不提"。**不做永久忽略** —— 那种开关用户设完就忘,
+    // 然后再也收不到更新。下一个版本还会再来。
+    state.updDismissed = (state.upd || {}).latest || '';
+    $('updBar').hidden = true;
+  });
+  toggle('swUpdateCheck', 'updateCheck');
   toggle('swTopmost', 'topmost', () => {
     if (state.mode === 'chat') setMode('chat');   // 立刻生效
   });
@@ -4227,6 +4340,9 @@ async function boot() {
   if (!['orb', 'chat', 'full'].includes(start)) start = prefs.mode;
   if (!['orb', 'chat', 'full'].includes(start)) start = 'full';
   await loadDashboard(false);
+  // 有没有新版本。**只读后端存着的那份结果,不触发联网** ——
+  // 真正去问 GitHub 是后台每 6 小时一次的事
+  loadUpdate();
   // 对话历史:启动就把上次那段读回来,不是空白开始
   await loadChatIndex();
   if (state.chatId) await openChat(state.chatId);

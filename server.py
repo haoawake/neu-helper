@@ -40,6 +40,9 @@ from canvas_api import (
 )
 import desktop
 import native_window
+import platform_id
+import updater
+import version as appver
 from briefings import (BRIEF_HOUR, BriefingRunner, BriefingStore, build_prompt,
                        today_str)
 from chat_bridge import ChatSession
@@ -240,6 +243,13 @@ class Backend:
         # 不然一装上就把 20 条存量作业全弹一遍
         self._seen_items: set[str] | None = None
 
+        # ── 更新
+        self.update_info: dict = {}          # 上一次 check() 的结果
+        self.updater = updater.Updater(
+            HERE, on_event=lambda st: self.push_update(self.update_info, st))
+        # 这个版本已经提醒过了吗 —— 弹窗一个版本只弹一次,不是每次检查都弹
+        self._told_version = ""
+
     def mark_hot(self) -> None:
         """刚发过消息 —— 接下来这段时间 SSE 用高频轮询。"""
         self._hot_until = time.time() + 90
@@ -258,6 +268,15 @@ class Backend:
         with self._win_lock:
             self._win_events = [e for e in self._win_events if e.get("kind") != "sync"]
             self._win_events.append({"channel": "window", "kind": "sync", "sync": st})
+
+    def push_update(self, info: dict, job: dict) -> None:
+        """更新的状态推给前端。和 push_sync 一样只留最后一条 ——
+        下载进度是"当前是什么样",不是一条条流水。"""
+        with self._win_lock:
+            self._win_events = [e for e in self._win_events
+                                if e.get("kind") != "update"]
+            self._win_events.append({"channel": "window", "kind": "update",
+                                     "info": info, "job": job})
 
     def sync_courses(self) -> list[dict]:
         d = self.dashboard()
@@ -764,6 +783,43 @@ class Backend:
                                      "on": bool(on)})
 
     # ------------------------------------------------------------ 信息弹窗
+
+    def check_update(self, force: bool = False) -> dict:
+        """问一次 GitHub。**结果存下来给界面用,不要每次刷新都去问。**
+
+        设置里能关(updateCheck)—— 这个请求会把你的 IP 告诉 GitHub,
+        有人不想要这个,得给个开关。
+        """
+        if not force and not read_prefs().get("updateCheck", True):
+            return {}
+        info = updater.check()
+        if info.get("ok"):
+            self.update_info = info
+            self.push_update(info, self.updater.snapshot())
+            # 弹窗提醒:**一个版本只弹一次**。每 6 小时弹一次同一个版本
+            # 是骚扰,而横幅会一直挂着,想更新随时点得到
+            if (info.get("newer") and info["latest"] != self._told_version
+                    and read_prefs().get("toastOn", True)):
+                self._told_version = info["latest"]
+                self.notify(f"有新版本 v{info['latest']}",
+                            "点这里去更新 —— 或者在设置 → 通用里更新。")
+        elif info.get("error"):
+            # 查不到不是错误:断网、GitHub 抽风都很正常,别拿它烦人
+            print(f"[update] 查不到:{info['error']}", file=sys.stderr, flush=True)
+        return info
+
+    def start_update_watch(self) -> None:
+        """开机查一次(等 40 秒,别和启动抢),之后每 CHECK_EVERY 一次。"""
+        def loop():
+            time.sleep(40)
+            while True:
+                try:
+                    self.check_update()
+                except Exception as exc:           # noqa: BLE001
+                    print(f"[update] {type(exc).__name__}: {exc}",
+                          file=sys.stderr, flush=True)
+                time.sleep(updater.CHECK_EVERY)
+        threading.Thread(target=loop, daemon=True, name="updatewatch").start()
 
     def notify(self, title: str, body: str) -> bool:
         """右下角弹一条。设置里关掉就什么都不做。"""
@@ -1356,6 +1412,9 @@ _prefs_lock = threading.Lock()
 # 设置面板里能调的每一项都在这儿有个默认值。前端拿到的永远是「默认值 + 存档」
 # 合并后的完整对象,所以前端不用到处写 fallback。
 DEFAULT_PREFS = {
+    # 每 6 小时问一次 GitHub 有没有新版本。**默认开**,但能关 ——
+    # 这个请求会把你的 IP 告诉 GitHub,有人不想要
+    "updateCheck": True,
     "theme": "auto",        # auto | light | dark
     "mode": "full",         # orb | chat | full
     "blur": 26,             # 玻璃模糊半径(px),0 = 关掉 backdrop-filter
@@ -1463,6 +1522,41 @@ def api_peek_pin():
     on = bool((request.get_json(silent=True) or {}).get("on"))
     backend.peek_pin(on)
     return jsonify({"ok": True, "pinned": on})
+
+
+@app.get("/api/update")
+def api_update_get():
+    """当前版本 + 上次检查的结果。**不联网** —— 界面刷新一次查一次
+    GitHub 是没必要的,也容易撞限流。"""
+    return jsonify({"version": appver.VERSION,
+                    "kind": updater.install_kind(HERE),
+                    "info": backend.update_info,
+                    "job": backend.updater.snapshot()})
+
+
+@app.post("/api/update/check")
+def api_update_check():
+    """现在去问一次 GitHub。"""
+    backend.check_update(force=True)
+    return jsonify({"ok": True, "info": backend.update_info,
+                    "version": appver.VERSION,
+                    "kind": updater.install_kind(HERE)})
+
+
+@app.post("/api/update/apply")
+def api_update_apply():
+    """下载并装上。打包版才做得了 —— 别的情况把下载页打开。"""
+    info = backend.update_info or {}
+    kind = updater.install_kind(HERE)
+    if kind != "packaged" or platform_id.IS_MAC:
+        # 源码版该 git pull;macOS 的 .app 替换没验证过,不拿它做实验
+        if info.get("page"):
+            webbrowser.open(info["page"])
+        return jsonify({"ok": False, "opened": True, "kind": kind,
+                        "error": "git pull 一下就行" if kind == "git"
+                                 else "这种安装方式要手动更新,已经打开下载页"})
+    started = backend.updater.start(info.get("asset") or "")
+    return jsonify({"ok": started, "job": backend.updater.snapshot()})
 
 
 @app.post("/api/toast/test")

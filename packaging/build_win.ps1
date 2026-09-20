@@ -21,6 +21,16 @@ Push-Location $proj
 
 function Say($m) { Write-Host "  $m" -ForegroundColor Cyan }
 
+# version.py is the single source of truth for the version number. Print it
+# here and remind what tag to use: if VERSION and the release tag ever
+# disagree, the in-app update check is permanently wrong in one direction
+# ("always up to date" or "always has an update"), and that is a miserable
+# thing to debug from a user's report.
+$verLine = (Select-String -Path (Join-Path $proj "version.py") -Pattern '^VERSION = ').Line
+$ver = ($verLine -split '"')[1]
+if (-not $ver) { throw "cannot read VERSION from version.py" }
+Say "building version $ver  --  publish it as tag v$ver"
+
 # The icon is generated from the same code that draws the floating orb, so the
 # two never drift. Cheap to regenerate; always do it.
 Say "generating the icon"
@@ -96,6 +106,9 @@ Source, issues, the macOS version:
 [IO.File]::WriteAllText((Join-Path $out "README.txt"), $readme,
                         (New-Object Text.UTF8Encoding $false))
 
+# The asset name is deliberately version-less: updater.py looks for
+# exactly "NEU-Helper-win-x64.zip" in the latest release. Putting the
+# version in the file name would mean editing the updater every release.
 Say "zipping"
 $zip = Join-Path $proj "dist\NEU-Helper-win-x64.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
