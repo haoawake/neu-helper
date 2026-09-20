@@ -25,6 +25,11 @@ const state = {
   course: null,        // 课程单页的数据
   courseSeg: 'hw',     // 课程单页的分段:hw / mat / ann
   sync: null,          // 课件同步的进度
+  week: null,          // 课表数据(/api/schedule 的返回)
+  weekStart: '',       // 当前显示这一周的周日 YYYY-MM-DD
+  weekEdit: null,      // 正在改的那一条(null = 在加新的)
+  weekTick: 0,         // 「现在」那条线的定时器
+  sched: null,         // 课表解析的进度
   page: 'study',       // 子页面:study | mail
   mail: null,          // 邮件拉取状态
   mailMsgs: [],        // 收件箱
@@ -1139,6 +1144,460 @@ function wireCourseView() {
     } catch (e) {
       reportError('sync', (e && e.message) || String(e), '', 0, e && e.stack);
     }
+  });
+}
+
+/* ═════════════════════════ 每周课程表 ═════════════════════════
+
+   横轴周日→周六,纵轴时刻。格子里三类东西:
+
+     上课          从课程首页 / syllabus / 公告的**正文**里抽出来的
+     office hour   同上
+     备忘录        data/memos.json 里「每周」和「某一天」那两种
+
+   前两类没有结构化接口可查 —— Canvas 的 /appointment_groups 和
+   /calendar_events 实测都是空的,时间全是老师写在网页上的散文。所以后端
+   过一次模型把散文变成条目(timetable.py),这里只负责画,以及让每一格都能
+   手改:抽错了点一下就能纠,改过的不会被下一次解析冲掉。
+
+   纵轴默认**只画有内容的时段**(现在是 10:00–18:00 左右)。0–24 全画的话
+   所有课挤在中间三分之一,看不清 —— 但「全天」按钮随时能切回去。 */
+
+const WK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+const WK_HOUR_PX = 46;          // 一小时画多高
+const WK_KIND_CN = { lecture: '上课', office: 'OH', memo: '备忘', other: '' };
+
+function wkSunday(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - x.getDay());
+  return x;
+}
+
+function wkYmd(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// "14:20" -> 860
+function wkMins(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || ''));
+  return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+}
+
+function wkClock(min) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(Math.floor(min / 60) % 24)}:${p(min % 60)}`;
+}
+
+function openWeek() {
+  $('dashView').hidden = true;
+  $('courseView').hidden = true;
+  $('weekView').hidden = false;
+  if (!state.weekStart) state.weekStart = wkYmd(wkSunday(new Date()));
+  loadWeek();
+  // 「实时」就体现在这儿:那条红线和「进行中」的高亮每分钟自己往下走,
+  // 不用重新拉数据(条目本身是每周固定的)
+  if (!state.weekTick) state.weekTick = setInterval(wkTick, 30000);
+}
+
+function closeWeek() {
+  $('weekView').hidden = true;
+  $('dashView').hidden = false;
+  if (state.weekTick) { clearInterval(state.weekTick); state.weekTick = 0; }
+}
+
+function wkTick() {
+  if ($('weekView').hidden) return;
+  renderWeek();
+}
+
+function wkShift(days) {
+  const d = new Date(state.weekStart + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  state.weekStart = wkYmd(d);
+  loadWeek();
+}
+
+async function loadWeek() {
+  try {
+    state.week = await apiGet('/api/schedule', { week: state.weekStart });
+  } catch (e) {
+    $('weekBanner').hidden = false;
+    $('weekBanner').textContent = '读不到课表:' + ((e && e.message) || e);
+    return;
+  }
+  $('weekBanner').hidden = true;
+  renderWeek();
+  renderWeekEntry();
+}
+
+/* 纵轴范围。默认贴着内容走,上下各留一小时余量;「全天」是 0–24。
+   一条都没有的时候给个 8–20 的空架子 —— 比一片 0–24 的空白好认。 */
+function wkRange(items) {
+  if (state.prefs.schedFull) return [0, 24];
+  if (!items.length) return [8, 20];
+  let lo = 24 * 60, hi = 0;
+  items.forEach((it) => {
+    lo = Math.min(lo, wkMins(it.start));
+    hi = Math.max(hi, wkMins(it.end));
+  });
+  return [Math.max(0, Math.floor(lo / 60) - 1), Math.min(24, Math.ceil(hi / 60) + 1)];
+}
+
+/* 同一天里时间重叠的条目分列排开,不然后面那条会被前面那条整个盖住。
+   贪心:按开始时间扫,能塞进已有某一列就塞,塞不下才开新列。 */
+function wkLayout(evs) {
+  let cluster = [];
+  let clusterEnd = -1;
+  const flush = () => {
+    if (cluster.length) {
+      const colEnd = [];
+      cluster.forEach((e) => {
+        let i = 0;
+        while (i < colEnd.length && colEnd[i] > e.s) i += 1;
+        if (i === colEnd.length) colEnd.push(0);
+        colEnd[i] = e.e;
+        e.col = i;
+      });
+      cluster.forEach((e) => { e.ncols = colEnd.length; });
+    }
+    cluster = [];
+    clusterEnd = -1;
+  };
+  evs.slice().sort((a, b) => a.s - b.s).forEach((e) => {
+    if (cluster.length && e.s >= clusterEnd) flush();
+    cluster.push(e);
+    clusterEnd = Math.max(clusterEnd, e.e);
+  });
+  flush();
+}
+
+function renderWeek() {
+  const d = state.week;
+  const grid = $('weekGrid');
+  grid.textContent = '';
+  if (!d) return;
+
+  const items = (d.items || []).filter(
+    (it) => state.prefs.schedMemos !== false || !it.memo);
+  const [lo, hi] = wkRange(items);
+  const top = lo * 60;
+  const total = (hi - lo) * 60;
+  const px = (min) => ((min - top) / 60) * WK_HOUR_PX;
+
+  const start = new Date(state.weekStart + 'T00:00:00');
+  const today = wkYmd(new Date());
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+
+  // ── 表头:星期 + 日期
+  const head = el('div', 'wk-head');
+  head.appendChild(el('div', 'wk-corner'));
+  for (let i = 0; i < 7; i += 1) {
+    const day = new Date(start);
+    day.setDate(day.getDate() + i);
+    const h = el('div', 'wk-dayh');
+    if (wkYmd(day) === today) h.classList.add('is-today');
+    h.appendChild(el('span', 'wk-dayh-n', WK_CN[i]));
+    h.appendChild(el('span', 'wk-dayh-d', `${day.getMonth() + 1}/${day.getDate()}`));
+    head.appendChild(h);
+  }
+  grid.appendChild(head);
+
+  // ── 主体:左边时刻尺,右边七列
+  const body = el('div', 'wk-body');
+  body.style.height = ((hi - lo) * WK_HOUR_PX) + 'px';
+  // 网格线是画在背景上的(repeating gradient),不是一堆 div —— 24 小时 × 7 列
+  // 真建出来是 168 个节点,每分钟重画一次太浪费
+  body.style.backgroundSize = `100% ${WK_HOUR_PX}px`;
+
+  const ruler = el('div', 'wk-ruler');
+  for (let h = lo; h <= hi; h += 1) {
+    const t = el('div', 'wk-tick', `${String(h % 24).padStart(2, '0')}:00`);
+    t.style.top = px(h * 60) + 'px';
+    ruler.appendChild(t);
+  }
+  body.appendChild(ruler);
+
+  for (let i = 0; i < 7; i += 1) {
+    const day = new Date(start);
+    day.setDate(day.getDate() + i);
+    const isToday = wkYmd(day) === today;
+    const col = el('div', 'wk-col');
+    if (isToday) col.classList.add('is-today');
+
+    const evs = items.filter((it) => it.weekday === i).map((it) => ({
+      it, s: wkMins(it.start), e: wkMins(it.end), col: 0, ncols: 1,
+    }));
+    wkLayout(evs);
+    evs.forEach((e) => {
+      col.appendChild(wkBlock(e, px, isToday, nowMin));
+    });
+
+    // 当前时刻那条线。只画在今天那一列上 —— 横贯七列的话,看一眼分不清
+    // 说的是"现在"还是某种分隔
+    if (isToday && nowMin >= top && nowMin <= top + total) {
+      const line = el('div', 'wk-now');
+      line.style.top = px(nowMin) + 'px';
+      line.title = '现在 ' + wkClock(nowMin);
+      col.appendChild(line);
+    }
+    body.appendChild(col);
+  }
+  grid.appendChild(body);
+
+  // ── 头上那行状态
+  const range = new Date(start);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  $('weekRange').textContent =
+    `${range.getMonth() + 1}月${range.getDate()}日 – ${end.getMonth() + 1}月${end.getDate()}日`;
+  $('btnWeekNow').hidden = state.weekStart === wkYmd(wkSunday(new Date()));
+  $('btnWeekFull').classList.toggle('is-on', !!state.prefs.schedFull);
+
+  const nAuto = items.filter((x) => x.auto).length;
+  const nHand = items.filter((x) => !x.auto && !x.memo).length;
+  const nMemo = items.filter((x) => x.memo).length;
+  const bits = [`${nAuto} 条抽自课程页面`];
+  if (nHand) bits.push(`${nHand} 条手加`);
+  if (nMemo) bits.push(`${nMemo} 条备忘`);
+  $('weekSub').textContent = bits.join(' · ');
+
+  renderWeekNotes(d);
+  // 页脚只说有货那几门课解析于何时 —— 五门课全列出来会绕两行,而没抽出
+  // 东西的那几门上面 quiet 那一行已经交代过了
+  const parsed = (d.parsed || []).filter((x) => x.n);
+  const when = (d.parsed || []).map((x) => x.at).filter(Boolean).sort().pop();
+  $('weekFoot').textContent = (d.parsed || []).length
+    ? `上次解析 ${(when || '').slice(5, 16)}`
+      + (parsed.length ? ` · ${parsed.map((x) => x.course).join('、')}` : '')
+      + (d.cost ? ` · 累计 $${d.cost}` : '')
+    : '还没解析过。点「重新解析」让它去读课程首页和 syllabus。';
+}
+
+function wkBlock(e, px, isToday, nowMin) {
+  const it = e.it;
+  const b = el('div', 'wk-ev is-' + (it.kind || 'other'));
+  b.style.top = px(e.s) + 'px';
+  b.style.height = Math.max(18, px(e.e) - px(e.s) - 2) + 'px';
+  b.style.left = `calc(${(e.col / e.ncols) * 100}% + 2px)`;
+  b.style.width = `calc(${(1 / e.ncols) * 100}% - 4px)`;
+  if (isToday && nowMin >= e.s && nowMin < e.e) b.classList.add('is-live');
+
+  // 颜色不是唯一的区分通道:每块自己带类型字样和时间
+  const kindCn = WK_KIND_CN[it.kind] || '';
+  const head = el('div', 'wk-ev-h');
+  if (kindCn) head.appendChild(el('span', 'wk-ev-k', kindCn));
+  // 和别人分列的时候块只有半格宽,"上课 11:00–14:20" 会折成两行、把名字挤没。
+  // 时间在纵轴上本来就读得出来,悬停也有 —— 窄的时候让位给名字
+  if (e.ncols < 2) head.appendChild(el('span', 'wk-ev-t', `${it.start}–${it.end}`));
+  b.appendChild(head);
+  b.appendChild(el('div', 'wk-ev-name', it.title || ''));
+  const sub = [it.course, it.place].filter(Boolean).join(' · ');
+  if (sub) b.appendChild(el('div', 'wk-ev-sub', sub));
+  if (it.edited) b.appendChild(el('span', 'wk-ev-flag', '改'));
+
+  b.title = [it.title, it.who, it.place, it.note,
+    `${WK_CN[it.weekday]} ${it.start}–${it.end}`].filter(Boolean).join('\n');
+
+  if (it.memo) {
+    b.classList.add('is-memo');
+  } else {
+    b.addEventListener('click', () => openWkSheet(it));
+  }
+  return b;
+}
+
+/* 模型看见了、但排不进格子的话。**这一段不能省** —— 空着的 office hour 列
+   看不出是"老师没有"还是"没抓到",这里那句"TA office hour 还没公布"才说清。 */
+function renderWeekNotes(d) {
+  const box = $('weekNotes');
+  box.textContent = '';
+  (d.notes || []).forEach((n) => {
+    const row = el('div', 'wk-note');
+    row.appendChild(el('span', 'wk-note-c', n.course || ''));
+    row.appendChild(el('span', 'wk-note-t', n.text || ''));
+    box.appendChild(row);
+  });
+  // 一条都没抽出来的课(培训模块、orientation)一行带过 —— 它们的 note
+  // 全是"这门课没有每周固定安排",逐条列出来会把上面两门真课的说明淹掉
+  const quiet = d.quiet || [];
+  if (quiet.length) {
+    const row = el('div', 'wk-note');
+    row.appendChild(el('span', 'wk-note-c', '其他'));
+    row.appendChild(el('span', 'wk-note-t',
+      `${quiet.join('、')} 没有每周固定安排`));
+    box.appendChild(row);
+  }
+}
+
+/* 仪表盘上那一行:今天接下来还有什么。**不点进去也有用**,所以它不只是个
+   按钮 —— 今天没课就说明天,明天也没有就说这周几条。 */
+function renderWeekEntry() {
+  const box = $('weekEntryText');
+  if (!box) return;
+  const d = state.week;
+  if (!d) { box.textContent = '还没读取'; return; }
+  const items = (d.items || []).filter((x) => !x.memo);
+  if (!items.length) {
+    box.textContent = '还没解析过 —— 点进去抽一次';
+    return;
+  }
+  const now = new Date();
+  const wd = now.getDay();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const live = items.find(
+    (x) => x.weekday === wd && wkMins(x.start) <= nowMin && nowMin < wkMins(x.end));
+  if (live) {
+    box.textContent = `正在进行 · ${live.title} 到 ${live.end}`
+      + (live.place ? ` · ${live.place}` : '');
+    return;
+  }
+  const next = items
+    .filter((x) => x.weekday === wd && wkMins(x.start) > nowMin)
+    .sort((a, b) => wkMins(a.start) - wkMins(b.start))[0];
+  if (next) {
+    box.textContent = `今天 ${next.start} ${next.title}`
+      + (next.place ? ` · ${next.place}` : '');
+    return;
+  }
+  // 今天没有了 —— 往后找最近的一天
+  for (let k = 1; k <= 7; k += 1) {
+    const day = (wd + k) % 7;
+    const list = items.filter((x) => x.weekday === day)
+      .sort((a, b) => wkMins(a.start) - wkMins(b.start));
+    if (list.length) {
+      box.textContent = `${k === 1 ? '明天' : WK_CN[day]} ${list[0].start} ${list[0].title}`;
+      return;
+    }
+  }
+  box.textContent = `本周 ${items.length} 项`;
+}
+
+/* ── 改一条 / 加一条 ──
+   自动抽出来的条目改的是覆盖层(后端 edits),重新解析不会冲掉;
+   手加的条目是真改真删。前端只看 id 前缀:u 开头是手加的。 */
+
+function openWkSheet(it) {
+  state.weekEdit = it || null;
+  const mk = !it;
+  $('weekSheetTitle').textContent = mk ? '加一条' : '改这一条';
+  $('wfTitle').value = it ? (it.title || '') : '';
+  $('wfKind').value = it ? (it.kind || 'other') : 'other';
+  $('wfCourse').value = it ? (it.course || '') : '';
+  $('wfWeekday').value = String(it ? it.weekday : new Date().getDay());
+  $('wfStart').value = it ? it.start : '09:00';
+  $('wfEnd').value = it ? it.end : '10:00';
+  $('wfWho').value = it ? (it.who || '') : '';
+  $('wfPlace').value = it ? (it.place || '') : '';
+  $('wfUrl').value = it ? (it.url || '') : '';
+  $('wfNote').value = it ? (it.note || '') : '';
+  $('wfHint').textContent = it && it.auto
+    ? '这条是从课程页面里抽出来的。改了之后,重新解析不会把你的改动冲掉。'
+    : '';
+  $('btnWfRevert').hidden = !(it && it.auto && it.edited);
+  $('btnWfDel').hidden = mk;
+  $('weekSheet').hidden = false;
+  $('wfTitle').focus();
+}
+
+function closeWkSheet() {
+  $('weekSheet').hidden = true;
+  state.weekEdit = null;
+}
+
+async function wkSend(body) {
+  try {
+    const r = await apiPost('/api/schedule/item', body);
+    if (r && r.ok === false) {
+      $('wfHint').textContent = r.error || '没存上';
+      return false;
+    }
+  } catch (e) {
+    $('wfHint').textContent = (e && e.message) || String(e);
+    return false;
+  }
+  closeWkSheet();
+  await loadWeek();
+  return true;
+}
+
+function wkForm() {
+  return {
+    title: $('wfTitle').value.trim(),
+    kind: $('wfKind').value,
+    course: $('wfCourse').value.trim(),
+    weekday: Number($('wfWeekday').value),
+    start: $('wfStart').value,
+    end: $('wfEnd').value,
+    who: $('wfWho').value.trim(),
+    place: $('wfPlace').value.trim(),
+    url: $('wfUrl').value.trim(),
+    note: $('wfNote').value.trim(),
+  };
+}
+
+function renderSchedState(st) {
+  state.sched = st || {};
+  const box = $('weekState');
+  if (!box) return;
+  if (st && st.running) {
+    box.textContent = `解析中 ${st.done || 0}/${st.total || 0}`
+      + (st.course ? ` · ${st.course}` : '');
+  } else if (st && (st.errors || []).length) {
+    box.textContent = '解析出错:' + st.errors.join(' / ');
+  } else {
+    box.textContent = '';
+    // 刚跑完:把结果读回来
+    if (st && st.last && !$('weekView').hidden) loadWeek();
+  }
+  $('btnWeekParse').disabled = !!(st && st.running);
+}
+
+function wireWeek() {
+  $('btnWeek').addEventListener('click', openWeek);
+  $('btnWeekBack').addEventListener('click', closeWeek);
+  $('btnWeekPrev').addEventListener('click', () => wkShift(-7));
+  $('btnWeekNext').addEventListener('click', () => wkShift(7));
+  $('btnWeekNow').addEventListener('click', () => {
+    state.weekStart = wkYmd(wkSunday(new Date()));
+    loadWeek();
+  });
+  $('btnWeekFull').addEventListener('click', () => {
+    savePrefs({ schedFull: !state.prefs.schedFull });
+    renderWeek();
+  });
+  $('btnWeekAdd').addEventListener('click', () => openWkSheet(null));
+  $('btnWeekParse').addEventListener('click', async () => {
+    $('weekState').textContent = '解析中…';
+    try {
+      const r = await apiPost('/api/schedule/parse', {});
+      if (r && r.state) renderSchedState(r.state);
+    } catch (e) {
+      $('weekState').textContent = (e && e.message) || String(e);
+    }
+  });
+
+  $('btnWeekSheetX').addEventListener('click', closeWkSheet);
+  $('weekSheet').addEventListener('click', (e) => {
+    if (e.target === $('weekSheet')) closeWkSheet();
+  });
+  $('weekForm').addEventListener('submit', (e) => e.preventDefault());
+  $('btnWfSave').addEventListener('click', () => {
+    const f = wkForm();
+    if (wkMins(f.end) <= wkMins(f.start)) {
+      $('wfHint').textContent = '结束时间要晚于开始时间';
+      return;
+    }
+    const cur = state.weekEdit;
+    wkSend(cur ? Object.assign({ action: 'edit', id: cur.id }, f)
+               : Object.assign({ action: 'add' }, f));
+  });
+  $('btnWfRevert').addEventListener('click', () => {
+    if (state.weekEdit) wkSend({ action: 'revert', id: state.weekEdit.id });
+  });
+  $('btnWfDel').addEventListener('click', () => {
+    if (state.weekEdit) wkSend({ action: 'delete', id: state.weekEdit.id });
   });
 }
 
@@ -3211,6 +3670,10 @@ function handleWindowEvent(ev) {
     renderSyncState(ev.sync || {});
     return;
   }
+  if (ev.kind === 'sched') {
+    renderSchedState(ev.sched || {});
+    return;
+  }
   if (ev.kind === 'update') {
     renderUpdate(ev.info || {}, ev.job || {});
     return;
@@ -3633,6 +4096,7 @@ const PREF_FALLBACK = {
   toastOn: true, toastSecs: 9,
   focusCourses: '', prefsTab: 'general',
   mailFacts: [], mailTags: [], mailAiOn: true, mailModel: 'sonnet',
+  schedModel: 'sonnet', schedFull: false, schedMemos: true,
   mailMarkRead: true,
   mailSort: 'date_desc',
 };
@@ -3713,6 +4177,14 @@ function syncPrefsUI() {
   setSwitch('swDismissed', p.showDismissed !== false);
   setSwitch('swTopmost', p.topmost !== false);
   setSwitch('swSync', p.autoSync !== false);
+  $('selSchedModel').value = p.schedModel || 'sonnet';
+  setSwitch('swSchedMemos', p.schedMemos !== false);
+  if ($('schedPrefState')) {
+    const sc = state.sched;
+    $('schedPrefState').textContent = !sc ? ''
+      : sc.running ? `解析中 ${sc.done}/${sc.total}`
+        : sc.last ? `上次 ${sc.last}` : '';
+  }
   setSwitch('swMail', p.mailOn !== false);
   $('numMailHour').value = p.mailHour;
   const nWatch = (state.mail && state.mail.watching) || state.watching.length || 0;
@@ -4219,6 +4691,40 @@ function wirePrefs() {
     if (state.data && !state.data.error) renderTodo(state.data.todo);
   });
   toggle('swSync', 'autoSync');
+  $('selSchedModel').addEventListener('change', (e) => {
+    savePrefs({ schedModel: e.target.value });
+  });
+  // 备忘录进不进格子是纯显示问题,不用重新解析,原地重画就行
+  toggle('swSchedMemos', 'schedMemos', () => {
+    if (!$('weekView').hidden) renderWeek();
+  });
+  $('btnSchedParse').addEventListener('click', async () => {
+    $('schedPrefState').textContent = '解析中…';
+    try {
+      const r = await apiPost('/api/schedule/parse', {});
+      if (r && r.state) renderSchedState(r.state);
+    } catch (e) {
+      $('schedPrefState').textContent = (e && e.message) || String(e);
+    }
+  });
+  // 清空连手改和手加的一起没,所以按两下才算数(和删对话那个按钮一个套路)
+  const resetBtn = $('btnSchedReset');
+  let schedArmed = 0;
+  resetBtn.addEventListener('click', async () => {
+    if (Date.now() - schedArmed > 3000) {
+      schedArmed = Date.now();
+      resetBtn.textContent = '连手改的一起清?';
+      setTimeout(() => {
+        if (Date.now() - schedArmed >= 3000) resetBtn.textContent = '清空课表';
+      }, 3100);
+      return;
+    }
+    schedArmed = 0;
+    resetBtn.textContent = '清空课表';
+    await apiPost('/api/schedule/item', { action: 'reset' });
+    await loadWeek();
+    $('schedPrefState').textContent = '已清空';
+  });
   toggle('swMail', 'mailOn');
   $('numMailHour').addEventListener('change', (e) => {
     let h = parseInt(e.target.value, 10);
@@ -4316,6 +4822,7 @@ function wireEvents() {
   wireChatHistory();
   wireDropZone();
   wireCourseView();
+  wireWeek();
   wireMail();
   wireMailPrefs();
   wireMemo();
@@ -4415,6 +4922,10 @@ async function boot() {
   await loadBriefIndex();
   // 备忘录:角标要有数,展开过的话列表也一起拉回来
   await loadMemos();
+  // 课表:仪表盘上那行「今天接下来有什么」要有内容,所以启动就读一次。
+  // 只读存档,不跑模型 —— 解析是你点「重新解析」才发生的事
+  state.weekStart = wkYmd(wkSunday(new Date()));
+  loadWeek();
   // 上次在哪个子页面就回哪个
   setPage(new URLSearchParams(location.search).get('page') || prefs.page || 'study');
   // 排障:URL 上带 &panel=prefs 就直接把设置面板打开(env CANVAS_HELPER_PANEL)

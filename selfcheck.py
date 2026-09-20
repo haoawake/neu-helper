@@ -267,6 +267,8 @@ def _backend():
     chk("静态页加载得了", c3 == 200, f"{c3},{n3} 字节")
     c4, n4 = get(f"/api/memos?k={server.TOKEN}")
     chk("备忘录接口", c4 == 200, f"{c4},{n4} 字节")
+    c5, n5 = get(f"/api/schedule?k={server.TOKEN}")
+    chk("课程表接口", c5 == 200, f"{c5},{n5} 字节")
     return True, f"端口 {port}"
 
 

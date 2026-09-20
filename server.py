@@ -56,6 +56,7 @@ import mailflags
 import mailparts
 import mailpeople
 import memos
+import timetable as tt
 import toast as toastmod
 
 # 两个根目录。**没打包的时候它们是同一个**,所以平时读起来和以前一样。
@@ -219,6 +220,14 @@ class Backend:
             ),
         )
 
+        # 课表:上课时间和 office hour **不是查出来的,是从课程正文里抽的** ——
+        # Canvas 没有这两样的结构化接口,理由和实测记在 timetable.py 开头。
+        # 抽要跑模型,所以走后台线程 + 一份存档,界面渲染只读存档。
+        self.schedule = tt.ScheduleStore(HERE / "data" / "schedule.json")
+        self.sched_state = {"running": False, "done": 0, "total": 0,
+                            "course": "", "last": None, "errors": []}
+        self._sched_lock = threading.Lock()
+
         # 课件同步:把 Canvas 上的文件分门别类下到本地,增量更新
         self.sync = FileSync(
             HERE / "data" / "downloads",
@@ -269,6 +278,14 @@ class Backend:
         with self._win_lock:
             self._win_events = [e for e in self._win_events if e.get("kind") != "sync"]
             self._win_events.append({"channel": "window", "kind": "sync", "sync": st})
+
+    def push_schedule(self) -> None:
+        """课表解析进度。和 push_sync 一样只留最后一条 —— 这是"当前状态"。"""
+        with self._win_lock:
+            self._win_events = [e for e in self._win_events
+                                if e.get("kind") != "sched"]
+            self._win_events.append({"channel": "window", "kind": "sched",
+                                     "sched": dict(self.sched_state)})
 
     def push_update(self, info: dict, job: dict) -> None:
         """更新的状态推给前端。和 push_sync 一样只留最后一条 ——
@@ -1138,6 +1155,112 @@ class Backend:
             "url": a.get("html_url"),
         }
 
+    # ------------------------------------------------------------ 课表
+
+    def schedule_view(self, week_start: str = "") -> dict:
+        """界面要的那份课表:解析出来的条目 + 手改 + 手加 + 备忘录。
+
+        week_start 是所显示那一周的周日(YYYY-MM-DD)。课表条目本身只认星期
+        几,不需要日期;但备忘录里"某一天"那种得靠日期才知道落不落在这一周。
+        """
+        courses = (self._cache or {}).get("courses") or []
+        out = self.schedule.view(courses)
+        week = []
+        try:
+            d0 = datetime.strptime(week_start, "%Y-%m-%d")
+            week = [(d0 + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+        except ValueError:
+            pass
+        try:
+            out["items"] += tt.memo_items(self.memos.all(include_done=False), week)
+        except Exception:
+            pass
+        out["items"].sort(key=lambda x: (x["weekday"], x["start"]))
+        out["state"] = dict(self.sched_state)
+        # 没有课程列表(仪表盘还没加载)时前端要能区分"还没抓"和"真的没有"
+        out["courses"] = [{"id": c["id"], "short": c.get("short") or c.get("code")}
+                          for c in courses]
+        return out
+
+    def parse_schedule(self, force: bool = False) -> bool:
+        """后台把每门课的正文送去解析。已经在跑就不重复起。"""
+        with self._sched_lock:
+            if self.sched_state["running"]:
+                return False
+            self.sched_state.update({"running": True, "done": 0, "total": 0,
+                                     "course": "", "errors": []})
+        self.push_schedule()
+        threading.Thread(target=self._parse_schedule, args=(force,),
+                         daemon=True).start()
+        return True
+
+    # 自动保鲜的间隔。和课件同步一样是一小时 —— 老师改课时间、补发 TA
+    # office hour 都是"今天某个时候"的事,一小时的延迟够用了
+    SCHED_EVERY = 3600
+
+    def start_schedule_watch(self) -> None:
+        """每小时把课表重抽一遍 —— 但**只在你已经手动解析过至少一门课之后**。
+
+        两件事分开:第一次解析永远是你点出来的(它要花钱,不该在你不知道的
+        时候发生);之后的保鲜是白捡的,因为源文没变就不会调模型,只多几个
+        HTTP 请求。老师在公告里补了 TA office hour,下一个整点就进格子了。
+        """
+
+        def loop():
+            time.sleep(90)          # 让首屏和课件同步先过去
+            while True:
+                try:
+                    if self.schedule.view().get("parsed"):
+                        self.parse_schedule(force=False)
+                except Exception:
+                    pass
+                time.sleep(self.SCHED_EVERY)
+
+        threading.Thread(target=loop, daemon=True, name="sched-watch").start()
+
+    def _parse_schedule(self, force: bool) -> None:
+        errors: list[str] = []
+        try:
+            c = self.client()
+            courses = self.sync_courses()
+            try:
+                mine = c.my_sections()
+            except Exception:
+                mine = {}
+            model = read_prefs().get("schedModel") or "sonnet"
+            self.sched_state["total"] = len(courses)
+            self.push_schedule()
+            for i, course in enumerate(courses):
+                self.sched_state["course"] = course.get("short") or ""
+                self.push_schedule()
+                try:
+                    try:
+                        anns = self._announcements(c, [course], 45)
+                    except Exception:
+                        anns = []
+                    src = tt.gather(c, course, mine.get(course["id"], []), anns)
+                    # 正文短到这个份上的课(纯培训模块之类)根本没有课时表,
+                    # 送进去只是白花钱
+                    if len(src["text"]) < 300:
+                        continue
+                    if not force and src["fp"] == self.schedule.fingerprint(course["id"]):
+                        continue      # 源文没变,上次抽的还算数
+                    got, cost = tt.run_one(HERE, course, src["text"], model)
+                    self.schedule.put_course(course["id"], src["fp"], got, model, cost)
+                except Exception as exc:
+                    errors.append(f'{course.get("short")}:{exc}')
+                finally:
+                    self.sched_state["done"] = i + 1
+                    self.push_schedule()
+        except Exception as exc:
+            errors.append(str(exc))
+        finally:
+            self.sched_state.update({
+                "running": False, "course": "", "errors": errors[:5],
+                "last": datetime.now().strftime("%H:%M:%S"),
+            })
+            self.push_schedule()
+
 
 backend = Backend()
 app = Flask(__name__, static_folder=None)
@@ -1183,6 +1306,54 @@ def api_dashboard():
 @app.get("/api/assignment/<int:course_id>/<int:assignment_id>")
 def api_assignment(course_id: int, assignment_id: int):
     return jsonify(backend.assignment(course_id, assignment_id))
+
+
+# ─────────────────────────── 课表 ───────────────────────────
+
+
+@app.get("/api/schedule")
+def api_schedule():
+    return jsonify(backend.schedule_view(request.args.get("week", "")))
+
+
+@app.post("/api/schedule/parse")
+def api_schedule_parse():
+    """重新从课程正文里抽一遍。force=1 连"源文没变"的课也重抽。"""
+    body = request.get_json(silent=True) or {}
+    started = backend.parse_schedule(bool(body.get("force")))
+    return jsonify({"started": started, "state": backend.sched_state})
+
+
+@app.post("/api/schedule/item")
+def api_schedule_item():
+    """加 / 改 / 删一条。
+
+    自动抽出来的条目改不进存档本身(下次解析就冲掉了),改的是 edits 里的
+    覆盖层;手加的条目则是真改真删。前端不用关心这个区别 —— 看 id 前缀就行,
+    u 开头是手加的。
+    """
+    d = request.get_json(silent=True) or {}
+    act, iid = d.get("action"), (d.get("id") or "")
+    try:
+        if act == "add":
+            return jsonify({"ok": True, "item": backend.schedule.add_manual(d)})
+        if act == "delete":
+            return jsonify({"ok": backend.schedule.delete(iid)})
+        if act == "edit":
+            patch = {k: v for k, v in d.items() if k not in ("action", "id")}
+            if iid.startswith("u"):
+                return jsonify({"ok": backend.schedule.edit_manual(iid, patch)})
+            backend.schedule.edit(iid, patch)
+            return jsonify({"ok": True})
+        if act == "revert":          # 撤销手改,回到解析出来的样子
+            backend.schedule.edit(iid, {})
+            return jsonify({"ok": True})
+        if act == "reset":
+            backend.schedule.reset()
+            return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": False, "error": f"未知操作 {act}"}), 400
 
 
 def context_prefix(items: list) -> str:
@@ -1467,6 +1638,10 @@ DEFAULT_PREFS = {
     "focusCourses": "",     # 重点课程(课程简称,一行一个;空 = 全都一样看)
     "prefsTab": "general",  # 设置面板上次停在哪一栏
     "maxSyncMB": 80,        # 单个文件多大以上不自动下(课程录像动辄 200MB)
+    # ── 课表
+    "schedModel": "sonnet",  # 从课程正文里抽课时表用哪个模型
+    "schedFull": False,      # 纵轴画满 0–24,还是只画有内容的时段
+    "schedMemos": True,      # 备忘录里的每周/某天条目也画进格子
 }
 PREF_KEYS = set(DEFAULT_PREFS)
 

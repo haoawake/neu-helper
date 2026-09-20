@@ -58,6 +58,39 @@ CS5800 最近有没有新公告？
 
 MCP 只提供读取能力，不会替你提交作业、修改成绩或删除 Canvas 内容。
 
+### 🗓 每周课程表
+
+学业页里有一张周课表：横轴周日到周六，纵轴时刻，上面画着上课时间、老师和 TA 的
+office hour，以及备忘录里「每周」和「某一天」那两种。今天那一列有一条随时间走的
+红线；仪表盘上还有一行「今天接下来是什么」。
+
+**这两样 Canvas 没有结构化接口。** 实测（2026 秋，东北大学 Canvas）：
+
+| 想拿的东西 | 有没有接口 | 实际情况 |
+|---|---|---|
+| office hour | `/appointment_groups` | 空 —— 老师没用 Canvas 的 Scheduler |
+| 上课时间 | `/courses/:id/sections` | 只有 section 名字，没有 meeting time |
+| 任何一种 | `/calendar_events` | 整学期都是空的 |
+
+时间实际写在**课程首页表格、syllabus 和公告的正文里**，是人写的散文：
+
+```
+Section 21, CRN 19658: Wednesdays 11:00 am - 2:20 pm  Room 1010
+Office Hours:  Monday 2:00 – 3:00 PM (on campus)
+```
+
+所以 NEU Helper 的做法是：把这些正文捞出来过一次模型，抽成结构化条目存进
+`data/schedule.json`，之后界面渲染只读这份存档。**源文没变就不会重抽**，
+一门课几分钱。合并课（一门课底下好几个 section）会先用
+`/users/self/enrollments` 查出你注册的是哪一节，只画那一节。
+
+第一次解析要你自己点（它花钱）；之后每小时自动重抽一次，**源文没变就不调模型**，
+所以老师哪天在公告里补上 TA office hour，下一个整点它自己就进格子了。
+
+抽错了点那一格就能改；改过的条目不会被下一次解析冲掉，删掉的也不会被请回来。
+老师还没公布的（「TA office hour 待定」「预约制，没有固定时间」）不会被编造成
+格子，而是在表格下面单独列一行说明。
+
 ### 📄 课件同步与全文搜索
 
 课程文件可以增量同步到本地，并为 PDF / DOCX / PPTX 生成适合搜索的文本副本。
@@ -540,6 +573,8 @@ neu-helper/
 ├─ chat_bridge.py        # Claude CLI 对话桥接
 ├─ briefings.py          # 学业简报
 ├─ filesync.py           # 课程文件增量同步与文本抽取
+├─ timetable.py          # 每周课表：从课程正文里抽上课时间和 office hour
+├─ memos.py              # 备忘录
 │
 ├─ mailbox.py            # IMAP 邮箱
 ├─ mailai.py             # 邮件 AI 分类 / 摘要

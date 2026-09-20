@@ -275,6 +275,11 @@ def main() -> int:
         server.backend.sync.start_scheduler(server.backend.sync_courses)
         log("课件同步调度已启动")
 
+    # 课表保鲜:每小时重抽一次,但只在已经手动解析过之后。源文没变不调模型,
+    # 所以这一轮通常是白跑的 —— 值就值在老师改了时间你不用自己发现
+    server.backend.start_schedule_watch()
+    log("课表保鲜已启动")
+
     # 邮箱:3 分钟一轮拉收件箱 + 每天一次邮件简报(和课业那份完全分开)
     server.backend.mail_fetcher.start_scheduler(
         lambda: bool(server.read_prefs().get("mailOn", True)))

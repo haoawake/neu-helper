@@ -210,6 +210,80 @@ class CanvasClient:
             )
         return out
 
+    # ------------------------------------------------------------ 课表来源
+
+    # 课表这几个方法是给 timetable.py 用的。Canvas **没有**上课时间和 office
+    # hour 的结构化字段 —— /appointment_groups 和 /calendar_events 实测都是空
+    # 的,sections 里也只有名字。时间全是老师写在首页表格、syllabus、公告里
+    # 的散文。所以这里的活儿是"把可能写了时间的正文都捞出来",解析交给模型。
+
+    def my_sections(self) -> dict[int, list[int]]:
+        """我在每门课注册的 section id。
+
+        合并课(CS5800 把周一班和周三班并成一门)里,两个 section 的上课时间
+        不一样。不知道自己在哪一节,课表就会两节都画上 —— 所以这一步不能省。
+        """
+        out: dict[int, list[int]] = {}
+        raw = self.get_all("/users/self/enrollments", **{"state[]": "active"})
+        if not isinstance(raw, list):
+            return out
+        for e in raw:
+            cid, sid = e.get("course_id"), e.get("course_section_id")
+            if cid and sid:
+                out.setdefault(int(cid), []).append(int(sid))
+        return out
+
+    def sections(self, course_id: int) -> list[dict]:
+        """课程的所有 section(只有 id 和名字,名字里常带 CRN 和校区代码)。"""
+        raw = self.get_all(f"/courses/{course_id}/sections")
+        if not isinstance(raw, list):
+            return []
+        return [{"id": s.get("id"), "name": s.get("name") or ""} for s in raw]
+
+    def syllabus(self, course_id: int) -> str:
+        info = self.get(f"/courses/{course_id}", **{"include[]": ["syllabus_body"]})
+        return info.get("syllabus_body") or ""
+
+    def page_bodies(self, course_id: int, limit: int = 4) -> list[dict]:
+        """首页 + 最近更新的几个页面,连正文一起。
+
+        上课时间和 office hour 最常出现在首页那张表里(CS5800 就是),所以
+        首页一定要,而且要排在最前面。列表接口不返回 body,得按 slug 再查一次 ——
+        页面数量不多,限 limit 个足够,再多只是在给模型灌无关正文。
+        """
+        out: list[dict] = []
+        seen: set[str] = set()
+        try:
+            fp = self.get(f"/courses/{course_id}/front_page")
+            if fp.get("body"):
+                out.append({"title": fp.get("title") or "首页", "body": fp["body"],
+                            "front": True})
+                seen.add(fp.get("url") or "")
+        except Exception:
+            pass          # 没设首页的课会 404,不是错误
+        try:
+            lst = self.get_all(f"/courses/{course_id}/pages",
+                               max_pages=1, sort="updated_at", order="desc")
+        except Exception:
+            return out
+        if not isinstance(lst, list):
+            return out
+        for p in lst:
+            if len(out) >= limit:
+                break
+            slug = p.get("url") or ""
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            try:
+                full = self.get(f"/courses/{course_id}/pages/{slug}")
+            except Exception:
+                continue
+            if full.get("body"):
+                out.append({"title": full.get("title") or slug,
+                            "body": full["body"], "front": False})
+        return out
+
     # ------------------------------------------------------------ 课程视图
 
     def assignments(self, course_id: int, keep_past_days: int = 30) -> list[dict]:

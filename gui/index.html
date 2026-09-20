@@ -102,6 +102,14 @@
     <!-- 课程入口:点进去是这门课的单页(作业 / 课件 / 公告) -->
     <div class="course-chips" id="courseChips"></div>
 
+    <!-- 课程表入口。**不只是个按钮** —— 顺带把今天剩下的第一件事说出来,
+         不点进去也有用 -->
+    <button type="button" class="week-entry" id="btnWeek">
+      <span class="week-entry-k">课程表</span>
+      <span class="week-entry-v" id="weekEntryText">—</span>
+      <span class="week-entry-go" aria-hidden="true">›</span>
+    </button>
+
     <section class="block">
       <div class="block-head">
         <h2>待办</h2>
@@ -149,6 +157,45 @@
 
      <div id="courseBody"></div>
      <footer class="pane-foot muted" id="courseFoot"></footer>
+   </div>
+
+   <!-- ─────── 每周课程表 ───────
+        横轴周日→周六,纵轴时刻。上课时间和 office hour 是从课程首页 /
+        syllabus / 公告的**正文**里抽出来的(Canvas 没有这两样的结构化接口,
+        理由见 timetable.py),所以每个格子都能手改,改过的不会被重新解析冲掉。 -->
+   <div id="weekView" hidden>
+     <div class="course-head">
+       <button class="icon-btn" id="btnWeekBack" title="返回仪表盘">
+         <span aria-hidden="true">←</span><span class="sr">返回</span>
+       </button>
+       <div class="course-title">
+         <div class="course-name">课程表</div>
+         <div class="course-sub muted" id="weekSub"></div>
+       </div>
+       <button class="link-btn" id="btnWeekFull" title="在「只画有课的时段」和「0–24 全画」之间切">全天</button>
+       <button class="link-btn" id="btnWeekAdd">新增</button>
+       <button class="link-btn" id="btnWeekParse" title="重新从课程正文里抽一遍(要跑模型)">重新解析</button>
+     </div>
+
+     <div class="week-nav">
+       <button class="icon-btn" id="btnWeekPrev" title="上一周">
+         <span aria-hidden="true">‹</span><span class="sr">上一周</span>
+       </button>
+       <span class="week-range" id="weekRange"></span>
+       <button class="icon-btn" id="btnWeekNext" title="下一周">
+         <span aria-hidden="true">›</span><span class="sr">下一周</span>
+       </button>
+       <button class="link-btn" id="btnWeekNow" hidden>回到本周</button>
+       <span class="tab-spacer"></span>
+       <span class="muted" id="weekState"></span>
+     </div>
+
+     <div id="weekBanner" class="banner" hidden></div>
+     <div class="week-grid" id="weekGrid"></div>
+     <!-- 模型看见了、但排不进格子的话:"TA office hour 还没公布"之类。
+          这一段比空格子有信息量 —— 空格子说不清是没有还是没抓到 -->
+     <div class="week-notes" id="weekNotes"></div>
+     <footer class="pane-foot muted" id="weekFoot"></footer>
    </div>
   </section>
 
@@ -349,6 +396,75 @@
     <div class="sheet-foot">
       <button class="btn" id="btnSheetAsk">问 Claude 这个作业</button>
       <button class="btn btn-quiet" id="btnSheetOpen">在 Canvas 打开</button>
+    </div>
+  </div>
+</div>
+
+<!-- 课表条目:改一条 / 加一条 -->
+<div class="sheet-backdrop" id="weekSheet" hidden>
+  <div class="sheet sheet-narrow" role="dialog" aria-modal="true"
+       aria-labelledby="weekSheetTitle">
+    <div class="sheet-head">
+      <h3 id="weekSheetTitle">改这一条</h3>
+      <button class="icon-btn" id="btnWeekSheetX" title="关闭">
+        <span aria-hidden="true">✕</span><span class="sr">关闭</span>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <form class="week-form" id="weekForm">
+        <div class="pref-row">
+          <label class="pref-label" for="wfTitle">名称</label>
+          <input type="text" id="wfTitle" class="num num-wide" maxlength="60">
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="wfKind">类型</label>
+          <select id="wfKind" class="select">
+            <option value="lecture">上课</option>
+            <option value="office">office hour</option>
+            <option value="other">其他</option>
+          </select>
+          <input type="text" id="wfCourse" class="num" maxlength="20"
+                 placeholder="课程简称">
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="wfWeekday">时间</label>
+          <select id="wfWeekday" class="select">
+            <option value="0">周日</option><option value="1">周一</option>
+            <option value="2">周二</option><option value="3">周三</option>
+            <option value="4">周四</option><option value="5">周五</option>
+            <option value="6">周六</option>
+          </select>
+          <input type="time" id="wfStart" class="num">
+          <input type="time" id="wfEnd" class="num">
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="wfWho">谁</label>
+          <input type="text" id="wfWho" class="num num-wide" maxlength="60"
+                 placeholder="老师 / TA 的名字">
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="wfPlace">地点</label>
+          <input type="text" id="wfPlace" class="num num-wide" maxlength="60"
+                 placeholder="教室号 / Zoom">
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="wfUrl">链接</label>
+          <input type="text" id="wfUrl" class="num num-wide" maxlength="400"
+                 placeholder="Zoom / 预约链接">
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="wfNote">备注</label>
+          <input type="text" id="wfNote" class="num num-wide" maxlength="120">
+        </div>
+        <p class="pref-hint" id="wfHint"></p>
+      </form>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn" id="btnWfSave">保存</button>
+      <button class="btn btn-quiet" id="btnWfRevert" hidden
+              title="丢掉手改,回到从课程正文里抽出来的样子">还原</button>
+      <span class="tab-spacer"></span>
+      <button class="btn btn-quiet link-danger" id="btnWfDel">删除</button>
     </div>
   </div>
 </div>
@@ -567,6 +683,35 @@
             <button class="btn btn-quiet" id="btnSyncNow">立即同步</button>
             <button class="btn btn-quiet" id="btnOpenDownloads">打开课件目录</button>
             <span class="muted" id="syncState"></span>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>课程表</h4>
+          <p class="pref-hint">上课时间和 office hour <strong>Canvas 没有结构化接口</strong>
+             —— 它们是从课程首页、syllabus 和公告的正文里抽出来的,所以要跑一次模型
+             (一门课几分钱,源文没变就不会重抽)。抽错了在课程表里点那一格就能改,
+             改过的不会被下一次解析冲掉。</p>
+          <div class="pref-row">
+            <label class="pref-label" for="selSchedModel">用哪个模型</label>
+            <select id="selSchedModel" class="select">
+              <option value="haiku">haiku(便宜)</option>
+              <option value="sonnet">sonnet(均衡)</option>
+              <option value="opus">opus(最准)</option>
+            </select>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="swSchedMemos"
+                   title="备忘录里「每周」和「某一天」那两种,按 30 分钟的块画进格子">备忘录也画进去</label>
+            <button class="switch" id="swSchedMemos" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnSchedParse">重新解析一次</button>
+            <button class="btn btn-quiet link-danger" id="btnSchedReset"
+                    title="连手改和手加的一起清掉">清空课表</button>
+            <span class="muted" id="schedPrefState"></span>
           </div>
         </section>
       </div>
