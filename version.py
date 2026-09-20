@@ -30,12 +30,18 @@ def parse(v: str) -> tuple:
     return tuple(out[:3])
 
 
-def is_newer(remote: str, local: str = VERSION) -> bool:
+def is_newer(remote: str, local: str | None = None) -> bool:
     """远端那个版本比本地新吗。
 
     **相等不算新** —— 不然每次检查都会弹一次"有新版本"。
+
+    local 默认取 VERSION,但**不能写成默认参数** `local: str = VERSION`:
+    那个值在函数定义时就绑死了,之后改 `version.VERSION` 不会生效。
+    生产里 VERSION 不变所以看不出问题,但测试("装成老版本去查更新")
+    会得到一个自相矛盾的结果:current 是 1.0.1、latest 是 1.0.2、
+    newer 却是 False。踩过一次。
     """
     try:
-        return parse(remote) > parse(local)
+        return parse(remote) > parse(local if local is not None else VERSION)
     except Exception:                              # noqa: BLE001
         return False
