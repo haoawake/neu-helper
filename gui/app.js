@@ -1649,6 +1649,62 @@ function renderMailLinks(links, m, all) {
   return box;
 }
 
+/* ── 安装完整性 ──
+
+   装机脚本半路失败过(PowerShell 把一句正常提示当成致命错误,脚本在第 2 步
+   终止)。那之后应用能跑,但 MCP 没注册、快捷方式没建 —— 而让人"再装一遍"
+   是个很差的答复。所以应用自己查、自己补。 */
+
+async function loadSetup() {
+  try {
+    const d = await apiGet('/api/setup');
+    state.setup = d;
+    renderSetup();
+  } catch (e) { /* 查不了就算了 */ }
+}
+
+function renderSetup() {
+  const d = state.setup || {};
+  const miss = d.missing || [];
+  const bar = $('fixBar');
+  const show = miss.length && !state.setupDismissed;
+  if (bar) {
+    bar.hidden = !show;
+    if (show) {
+      $('fixText').textContent = '安装没做完:' + miss.join('、');
+    }
+  }
+  const box = $('setupState');
+  if (box) box.textContent = miss.length ? miss.join('、') : '安装是完整的';
+}
+
+async function fixSetup() {
+  $('setupState').textContent = '正在补…';
+  const bar = $('fixBar');
+  if (bar && !bar.hidden) $('fixText').textContent = '正在补…';
+  try {
+    const r = await apiPost('/api/setup/fix', {});
+    state.setup = { state: r.state, missing: [] };
+    // **照实说**:哪些补上了、哪些没补上。只说一句"好了"是不负责任的
+    const lines = (r.done || []).map((x) => '✓ ' + x)
+      .concat((r.failed || []).map((x) => '✗ ' + x));
+    $('setupState').textContent = lines.join(' · ') || '没什么要补的';
+    if (r.failed && r.failed.length) {
+      if (bar) { bar.hidden = false; $('fixText').textContent = '还差:' + r.failed.join('、'); }
+    } else {
+      state.setupDismissed = true;
+      if (bar) bar.hidden = true;
+    }
+    await loadSetup();
+    if (!(state.setup.missing || []).length) {
+      $('setupState').textContent = lines.join(' · ') + ' —— 现在是完整的了';
+      if (bar) bar.hidden = true;
+    }
+  } catch (e) {
+    $('setupState').textContent = '没补成:' + ((e && e.message) || e);
+  }
+}
+
 /* ── 更新 ──
 
    这条横幅**不复用 #banner**:那个是仪表盘报错的位置、每次刷新会被清掉,
@@ -4182,6 +4238,12 @@ function wirePrefs() {
     apiPost('/api/reveal', { what: 'downloads' }).catch(() => {});
   });
 
+  $('btnSetupFix').addEventListener('click', () => fixSetup());
+  $('fixGo').addEventListener('click', () => fixSetup());
+  $('fixLater').addEventListener('click', () => {
+    state.setupDismissed = true;
+    $('fixBar').hidden = true;
+  });
   $('btnUpdCheck').addEventListener('click', () => checkUpdate());
   $('btnUpdGo').addEventListener('click', () => applyUpdate());
   $('updGo').addEventListener('click', () => applyUpdate());
@@ -4343,6 +4405,8 @@ async function boot() {
   // 有没有新版本。**只读后端存着的那份结果,不触发联网** ——
   // 真正去问 GitHub 是后台每 6 小时一次的事
   loadUpdate();
+  // 安装完整吗(要跑一次 claude mcp list,慢一点,所以放在后面)
+  loadSetup();
   // 对话历史:启动就把上次那段读回来,不是空白开始
   await loadChatIndex();
   if (state.chatId) await openChat(state.chatId);

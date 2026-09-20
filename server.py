@@ -41,6 +41,7 @@ from canvas_api import (
 import desktop
 import native_window
 import platform_id
+import setupfix
 import updater
 import version as appver
 from briefings import (BRIEF_HOUR, BriefingRunner, BriefingStore, build_prompt,
@@ -1522,6 +1523,23 @@ def api_peek_pin():
     on = bool((request.get_json(silent=True) or {}).get("on"))
     backend.peek_pin(on)
     return jsonify({"ok": True, "pinned": on})
+
+
+@app.get("/api/setup")
+def api_setup_state():
+    """安装完整吗。只读、不改东西。
+
+    存在的理由:装机脚本可能跑到一半失败(真发生过),那时候应用能跑但缺
+    半套配置 —— 让用户"再装一遍"是个很差的答复。
+    """
+    st = setupfix.state(HERE)
+    return jsonify({"state": st, "missing": setupfix.missing(st)})
+
+
+@app.post("/api/setup/fix")
+def api_setup_fix():
+    """把缺的补上:MCP 注册、CLAUDE.md、权限、快捷方式。"""
+    return jsonify(setupfix.fix(HERE))
 
 
 @app.get("/api/update")

@@ -2264,3 +2264,13 @@ body.is-morphing .layout-mail { animation: none; }
 .upd-bar.is-working .upd-go,
 .upd-bar.is-working .upd-what,
 .upd-bar.is-working .upd-x { display: none; }
+
+
+/* 「安装没做完」用的是同一条横幅,换成警示色 —— 它和"有新版本"是两回事:
+   前者是"现在就有东西不好使",后者是"有更好的可以拿"。 */
+.upd-bar.is-warn {
+  background: var(--serious-wash, var(--accent-wash));
+  border-color: var(--warning, var(--field-edge));
+}
+.upd-bar.is-warn .upd-text { color: var(--text-primary); }
+.upd-bar.is-warn .upd-go { background: var(--warning, var(--accent-ink)); }

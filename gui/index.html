@@ -67,6 +67,13 @@
    <div id="dashView">
     <!-- 有新版本。**不和 #banner 共用** —— 那个是仪表盘报错的位置、
          每次刷新都会被清掉;这条要一直挂着,直到你更新或者点掉 -->
+    <!-- 安装没做完(装机脚本半路失败过一次,所以这不是假想的情况)。
+         和更新那条分开:一个是"代码旧了",一个是"配置缺了" -->
+    <div id="fixBar" class="upd-bar is-warn" hidden>
+      <span id="fixText" class="upd-text"></span>
+      <button type="button" class="upd-go" id="fixGo">补全</button>
+      <button type="button" class="upd-x" id="fixLater" title="这次先不提">✕</button>
+    </div>
     <div id="updBar" class="upd-bar" hidden>
       <span id="updText" class="upd-text"></span>
       <button type="button" class="upd-go" id="updGo">更新</button>
@@ -466,6 +473,10 @@
             <button class="switch" id="swUpdateCheck" role="switch" aria-checked="true">
               <span class="switch-dot"></span>
             </button>
+          </div>
+          <div class="pref-row pref-row-btns">
+            <button class="btn btn-quiet" id="btnSetupFix">补全安装</button>
+            <span class="muted" id="setupState"></span>
           </div>
           <div class="pref-row pref-row-btns">
             <button class="btn btn-quiet" id="btnUpdCheck">现在检查</button>
