@@ -170,10 +170,11 @@ def setup_orb() -> None:
         return
     server.attach_orb(o)
     log(f"悬浮球就绪 hwnd={o.hwnd} 直径={o.diameter}px")
-    # 右下角那个信息弹窗。点它 = 把应用叫回到上次那个形态
+    # 右下角那个信息弹窗。点它 = 把应用叫回到上次那个形态,外加跳到该看的
+    # 地方(更新提醒点一下要能落到那条横幅上,见 Backend.toast_clicked)
     try:
         server.backend.toast = toast.Toast(
-            on_click=lambda: server.apply_mode(server.restore_mode()),
+            on_click=server.backend.toast_clicked,
             scale=native_window.render_scale(h),   # 同上,见球那里的注释
             dark=server.dark_mode())
         log(f"信息弹窗就绪 hwnd={server.backend.toast.hwnd}")

@@ -2202,18 +2202,61 @@ function renderUpdate(info, job) {
     return;
   }
 
-  const show = i.newer && state.updDismissed !== i.latest;
+  // 「有更新」有两种。**源码版的更新不经过 Release** —— 代码一推上 main
+  // 就能快进拿到,所以那种情况报的是提交数,不是版本号。
+  const gitN = Number(i.git_behind || 0);
+  const relNew = !!(i.newer && i.latest);
+  const key = relNew ? i.latest : (gitN ? `git:${gitN}` : '');
+  const show = !!key && skipKey() !== key;
   bar.hidden = !show;
   if (show) {
-    txt.textContent = `有新版本 v${i.latest}`
-      + (i.published ? `(${i.published})` : '')
-      + ` —— 你现在是 v${i.current}`;
+    txt.textContent = relNew
+      ? `有新版本 v${i.latest}`
+        + (i.published ? `(${i.published})` : '')
+        + ` —— 你现在是 v${i.current}`
+      : `源码有 ${gitN} 个新提交 —— 点更新就快进`;
+    // 源码版没有 Release notes 可看,提交标题就是"改了什么"
+    bar.title = relNew ? '' : (i.git_subjects || []).join('\n');
   }
-  setUpdState(i.newer
-    ? `有新版本 v${i.latest}`
-    : (i.latest ? `已经是最新的(v${i.current})` : ''));
+  setUpdState(relNew ? `有新版本 v${i.latest}`
+    : gitN ? `源码落后 ${gitN} 个提交`
+      : (i.latest ? `已经是最新的(v${i.current})` : ''));
   const go = $('btnUpdGo');
-  if (go) go.hidden = !i.newer;
+  if (go) go.hidden = !(relNew || gitN);
+  // 「改了什么」只在有 Release 页可看的时候给 —— 源码版点开会落到
+  // 上一个 Release 的页面,那是在说谎
+  const what = $('updWhat');
+  if (what) what.hidden = !relNew || !i.page;
+}
+
+/* 「跳过这个版本」记在 prefs 里,重开还算数。源码版的提交数每次 fetch
+   都在变,记不住也不该记 —— 那种只在这一次会话里收起来。 */
+function skipKey() {
+  const i = state.upd || {};
+  return (i.newer && i.latest) ? (state.prefs.skipVersion || '') : state.updDismissed;
+}
+
+/* 点了右下角那条更新弹窗之后落到横幅上。
+
+   只把窗口叫回来是不够的:横幅在学业页的仪表盘里,而你可能正停在邮箱页
+   或者课程表上 —— 那条弹窗就白弹了。所以这里把路铺完:切回学业页、退出
+   子视图、把横幅滚进视野、闪一下。 */
+function gotoWhere(where) {
+  if (where !== 'update') return;
+  setPage('study');
+  if (!$('weekView').hidden) closeWeek();
+  $('courseView').hidden = true;
+  $('dashView').hidden = false;
+  const bar = $('updBar');
+  if (!bar || bar.hidden) return;
+  try {
+    bar.scrollIntoView({ block: 'nearest' });
+  } catch (e) { /* 老 webview 没有这个参数,滚不动就算了 */ }
+  bar.classList.remove('is-flash');
+  // 重排一次再加回来,连点两下才会重新播动画
+  void bar.offsetWidth;
+  bar.classList.add('is-flash');
+  setTimeout(() => bar.classList.remove('is-flash'), 1600);
 }
 
 function setUpdState(t) {
@@ -2237,6 +2280,8 @@ async function checkUpdate() {
     state.updKind = d.kind;
     // 手动点了「现在检查」就别再被"这次先不提"挡着
     state.updDismissed = '';
+    // 手点了检查 = 他现在就想知道,把之前跳过的那个版本解开
+    if (state.prefs.skipVersion) savePrefs({ skipVersion: '' });
     renderUpdate(d.info || {}, {});
     if (!(d.info || {}).ok && (d.info || {}).error) {
       setUpdState('查不到:' + d.info.error);
@@ -3685,6 +3730,10 @@ function handleWindowEvent(ev) {
     renderUpdate(ev.info || {}, ev.job || {});
     return;
   }
+  if (ev.kind === 'goto') {
+    gotoWhere(ev.where || '');
+    return;
+  }
   if (ev.kind === 'mail') {
     renderMailState(ev.mail || {});
     // 有新邮件进来就把列表刷一下(在邮箱页的时候)
@@ -4100,7 +4149,8 @@ const PREF_FALLBACK = {
   theme: 'auto', mode: 'full', blur: 26, glass: 0.55, anim: true,
   orbSize: 36, briefHour: 9, topmost: true, showDismissed: true, opacity: 1,
   briefHistory: 3, upcomingDays: 28, soonDays: 3, annDays: 10,
-  toastOn: true, toastSecs: 9,
+  toastOn: true, toastSecs: 9, updateCheck: true, updateToast: true,
+  skipVersion: '',
   focusCourses: '', prefsTab: 'general',
   mailFacts: [], mailTags: [], mailAiOn: true, mailModel: 'sonnet',
   schedModel: 'sonnet', schedFull: false, schedMemos: true,
@@ -4179,6 +4229,10 @@ function syncPrefsUI() {
         : f.pending ? `还有 ${f.pending} 封没取` : '都取过了';
   }
   setSwitch('swAnim', p.anim !== false);
+  // 这两个原来一个都没回填 —— HTML 里写死 aria-checked="true",于是把
+  // 「自动检查更新」关掉、重开面板它还显示是开的
+  setSwitch('swUpdateCheck', p.updateCheck !== false);
+  setSwitch('swUpdateToast', p.updateToast !== false);
   setSwitch('swToast', p.toastOn !== false);
   $('numToastSecs').value = p.toastSecs;
   setSwitch('swDismissed', p.showDismissed !== false);
@@ -4765,12 +4819,17 @@ function wirePrefs() {
     if (i.page) openExternal(i.page);
   });
   $('updLater').addEventListener('click', () => {
-    // 只是"这次先不提"。**不做永久忽略** —— 那种开关用户设完就忘,
-    // 然后再也收不到更新。下一个版本还会再来。
-    state.updDismissed = (state.upd || {}).latest || '';
+    // 「跳过这个版本」。**只跳过这一个版本** —— 下一个版本还会再来,
+    // 所以它不是那种"设完就忘、再也收不到更新"的全局开关。
+    // Release 的记进 prefs(重开还算数);源码那种报的是提交数,每次
+    // fetch 都在变,记住没意义,只收起这一次。
+    const i = state.upd || {};
+    if (i.newer && i.latest) savePrefs({ skipVersion: i.latest });
+    else state.updDismissed = `git:${Number(i.git_behind || 0)}`;
     $('updBar').hidden = true;
   });
   toggle('swUpdateCheck', 'updateCheck');
+  toggle('swUpdateToast', 'updateToast');
   toggle('swTopmost', 'topmost', () => {
     if (state.mode === 'chat') setMode('chat');   // 立刻生效
   });

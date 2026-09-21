@@ -259,6 +259,8 @@ class Backend:
             HERE, on_event=lambda st: self.push_update(self.update_info, st))
         # 这个版本已经提醒过了吗 —— 弹窗一个版本只弹一次,不是每次检查都弹
         self._told_version = ""
+        # 点右下角那条弹窗之后界面该跳到哪儿。show 的时候写上、点的时候取走
+        self._toast_go = ""
 
     def mark_hot(self) -> None:
         """刚发过消息 —— 接下来这段时间 SSE 用高频轮询。"""
@@ -808,23 +810,58 @@ class Backend:
         设置里能关(updateCheck)—— 这个请求会把你的 IP 告诉 GitHub,
         有人不想要这个,得给个开关。
         """
-        if not force and not read_prefs().get("updateCheck", True):
+        prefs = read_prefs()
+        if not force and not prefs.get("updateCheck", True):
             return {}
         info = updater.check()
+        # **源码版还要看一眼 origin。** check() 问的是 releases/latest,
+        # 而源码版的更新根本不经过 Release —— 代码一推上 main 就能快进拿到。
+        # 不看的话,推上去的修复对源码版用户同样是静默的
+        if updater.install_kind(HERE) == "git":
+            try:
+                g = updater.check_git(HERE)
+            except Exception as exc:               # noqa: BLE001
+                g = {}
+                print(f"[update] 源码检查跳过:{type(exc).__name__}: {exc}",
+                      file=sys.stderr, flush=True)
+            if g.get("behind"):
+                info["ok"] = True
+                info.setdefault("current", appver.VERSION)
+                info.update({"git_behind": g["behind"],
+                             "git_upstream": g.get("upstream") or "",
+                             "git_subjects": g.get("subjects") or []})
         if info.get("ok"):
             self.update_info = info
             self.push_update(info, self.updater.snapshot())
-            # 弹窗提醒:**一个版本只弹一次**。每 6 小时弹一次同一个版本
-            # 是骚扰,而横幅会一直挂着,想更新随时点得到
-            if (info.get("newer") and info["latest"] != self._told_version
-                    and read_prefs().get("toastOn", True)):
-                self._told_version = info["latest"]
-                self.notify(f"有新版本 v{info['latest']}",
-                            "点这里去更新 —— 或者在设置 → 通用里更新。")
+            self._tell_update(info, prefs)
         elif info.get("error"):
             # 查不到不是错误:断网、GitHub 抽风都很正常,别拿它烦人
             print(f"[update] 查不到:{info['error']}", file=sys.stderr, flush=True)
         return info
+
+    def _tell_update(self, info: dict, prefs: dict) -> None:
+        """有新版本就在右下角报一句。三道闸,缺一不可:
+
+          · **只对发了 Release 的版本报。** 源码版的新提交交给横幅 ——
+            为几个提交每 6 小时弹一次窗是骚扰
+          · 一个版本只报一次(_told_version 在内存里:重启算一次新的提醒
+            时机,而横幅一直挂着,想更新随时点得到)
+          · 点过「跳过这个版本」的,那个版本再也不提
+
+        **不受 toastOn 管。** 那个开关说的是"新作业、新邮件报不报",和
+        "你装的这份代码旧了"是两回事 —— 不想被内容打扰的人,不等于不想知道
+        有更新。所以更新提醒自己一个 updateToast。
+        """
+        latest = str(info.get("latest") or "")
+        if not (info.get("newer") and latest):
+            return
+        if latest in (self._told_version, str(prefs.get("skipVersion") or "")):
+            return
+        if not prefs.get("updateToast", True):
+            return
+        self._told_version = latest
+        self.notify(f"有新版本 v{latest}", "点这里去更新。",
+                    go="update", force=True)
 
     def start_update_watch(self) -> None:
         """开机查一次(等 40 秒,别和启动抢),之后每 CHECK_EVERY 一次。"""
@@ -839,10 +876,16 @@ class Backend:
                 time.sleep(updater.CHECK_EVERY)
         threading.Thread(target=loop, daemon=True, name="updatewatch").start()
 
-    def notify(self, title: str, body: str) -> bool:
-        """右下角弹一条。设置里关掉就什么都不做。"""
-        if not read_prefs().get("toastOn", True) or self.toast is None:
+    def notify(self, title: str, body: str, go: str = "",
+               force: bool = False) -> bool:
+        """右下角弹一条。设置里关掉就什么都不做。
+
+        `go` 是点它之后界面该跳到哪儿(见 toast_clicked);`force` 的调用方
+        自己管开关 —— 现在只有更新提醒是这样,它有自己的 updateToast。
+        """
+        if (not force and not read_prefs().get("toastOn", True)) or self.toast is None:
             return False
+        self._toast_go = go
         try:
             return bool(self.toast.show(title, body,
                                         float(read_prefs().get("toastSecs", 9))))
@@ -850,6 +893,23 @@ class Backend:
             print("[toast] 弹窗失败:" + traceback.format_exc(limit=2),
                   file=sys.stderr)
             return False
+
+    def toast_clicked(self) -> None:
+        """点了右下角那条弹窗。
+
+        把窗口叫回上次那个形态(原来就是这个行为),外加**跳到该看的地方**
+        —— 更新提醒弹出来、点一下却只是把窗口叫回来、横幅还在另一个子页面上,
+        那这条弹窗就白弹了。
+        """
+        try:
+            apply_mode(restore_mode())
+        except Exception:                          # noqa: BLE001
+            pass
+        go, self._toast_go = self._toast_go, ""
+        if go:
+            with self._win_lock:
+                self._win_events.append({"channel": "window", "kind": "goto",
+                                         "where": go})
 
     def notify_new_mail(self, added: int) -> None:
         """有新邮件:等 AI 过目完,把最要紧那封的摘要弹出来。
@@ -1588,6 +1648,11 @@ DEFAULT_PREFS = {
     # 每 6 小时问一次 GitHub 有没有新版本。**默认开**,但能关 ——
     # 这个请求会把你的 IP 告诉 GitHub,有人不想要
     "updateCheck": True,
+    # 有新版本时右下角报一句。**和 toastOn 分开** —— 不想被"新邮件"打扰
+    # 不等于不想知道有更新,理由见 Backend._tell_update
+    "updateToast": True,
+    # 点过「跳过这个版本」的那个版本号 —— 它再也不会提醒
+    "skipVersion": "",
     "theme": "auto",        # auto | light | dark
     "mode": "full",         # orb | chat | full
     "blur": 26,             # 玻璃模糊半径(px),0 = 关掉 backdrop-filter

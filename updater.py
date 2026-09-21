@@ -129,6 +129,56 @@ def check() -> dict:
     }
 
 
+def check_git(here: Path) -> dict:
+    """源码版:除了 Release,再看一眼 origin 上有没有新提交。
+
+    **为什么要这一步。** check() 问的是 `releases/latest`,拿 tag 跟本地
+    VERSION 比 —— 这对打包版是对的,但源码版的更新根本不经过 Release:
+    代码一推上 main 就能快进拿到。不看 origin 的话,推上去的修复对源码版
+    用户同样是静默的,他得自己想起来点一下「检查更新」。
+
+    只做**读**:fetch + 数提交。`git fetch` 会动本地的远端引用,那是它的
+    分内事;工作区、分支、HEAD 一概不碰(真要快进在 Updater._run_git 里,
+    那里还会先查工作区脏不脏)。
+
+    返回 {"behind": N, "upstream": "origin/main", "subjects": [...]};
+    不是 git 仓库、没有上游、fetch 失败,一律返回 {"behind": 0} ——
+    查不到新提交不是错误,不该拿它去烦人。
+    """
+    out: dict = {"behind": 0, "upstream": "", "subjects": []}
+    exe = shutil.which("git")
+    if not exe or not (here / ".git").is_dir():
+        return out
+
+    def git(*args: str, timeout: int = 60) -> tuple[int, str]:
+        try:
+            p = subprocess.run(
+                [exe, *args], cwd=str(here), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=timeout,
+                creationflags=_NO_WINDOW)
+        except Exception:                          # noqa: BLE001
+            return 1, ""
+        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+
+    code, upstream = git("rev-parse", "--abbrev-ref",
+                         "--symbolic-full-name", "@{u}")
+    if code != 0 or "/" not in upstream:
+        return out
+    out["upstream"] = upstream
+    if git("fetch", "--quiet", upstream.split("/")[0])[0] != 0:
+        return out
+    code, behind = git("rev-list", "--count", f"HEAD..{upstream}")
+    if code != 0 or not behind.isdigit():
+        return out
+    out["behind"] = int(behind)
+    if out["behind"]:
+        # 提交标题拿来当"改了什么" —— 源码版没有 Release notes 可看
+        code, log = git("log", "--format=%s", "-3", f"HEAD..{upstream}")
+        if code == 0:
+            out["subjects"] = [ln.strip() for ln in log.splitlines() if ln.strip()]
+    return out
+
+
 # ─────────────────────────── 下 + 换 ───────────────────────────
 
 

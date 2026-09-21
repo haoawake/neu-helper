@@ -2261,6 +2261,16 @@ body.is-morphing .layout-mail { animation: none; }
 .upd-x { background: transparent; color: var(--text-muted); padding: 3px 6px; }
 .upd-x:hover { color: var(--text-primary); }
 /* 下载中:按钮变成进度条。别再弹一个模态框 —— 就在原地告诉你到哪儿了 */
+/* 点更新弹窗跳过来的时候闪一下 —— 横幅和别的横幅长得一样,不闪的话
+   跳过来了也不知道该看哪条。no-anim 的时候不闪(那是用户关了动画)。 */
+.upd-bar.is-flash { animation: upd-flash 1.5s ease-out 1; }
+@keyframes upd-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  15% { box-shadow: 0 0 0 3px var(--accent-ink); }
+  45% { box-shadow: 0 0 0 3px var(--accent-ink); }
+}
+body.no-anim .upd-bar.is-flash { animation: none; }
+
 .upd-bar.is-working .upd-go,
 .upd-bar.is-working .upd-what,
 .upd-bar.is-working .upd-x { display: none; }
