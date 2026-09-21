@@ -1391,6 +1391,20 @@ class Backend:
         try:
             c = self.client()
             courses = self.sync_courses()
+            # **一门课都没有就得说出来。** 原来这里直接往下走:循环零次、
+            # errors 空、状态回到 idle —— 界面上什么都不显示,点「重新解析」
+            # 像是没反应。而这恰恰是新装的人最容易碰到的状态(Canvas 还没连上
+            # 或者 token 没写),沉默地什么都不做是最糟的回答
+            if not courses:
+                d = self.dashboard()
+                if d.get("error") == "config":
+                    raise RuntimeError(
+                        f"还没配好 Canvas token,抽不了课表 —— 跑一次 "
+                        f"{SETUP_SCRIPT} 写入 token")
+                if d.get("error"):
+                    raise RuntimeError(f"Canvas 连不上,抽不了课表:"
+                                       f"{d.get('message') or d['error']}")
+                raise RuntimeError("这学期一门在读的课都没有,没有课表可抽")
             try:
                 mine = c.my_sections()
             except Exception:
