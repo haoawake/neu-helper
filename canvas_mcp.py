@@ -61,7 +61,10 @@ def t_courses(_args):
 
 def t_upcoming(args):
     days = int(args.get("days", 21))
-    items = client().upcoming(days)
+    c = client()
+    # 多要一次课程列表,为的是把上学期遗留课程的待办挡在外面(planner
+    # 是跨课程的,它不认 courses() 那道筛子)
+    items = c.upcoming(days, {x["id"] for x in c.courses()})
     if not items:
         return f"未来 {days} 天内没有待办事项。"
     return jdump(items)
@@ -267,7 +270,7 @@ TOOLS = [
     },
     {
         "name": "canvas_courses",
-        "description": "列出所有在读课程,含课程 ID、课号、当前总评分数。其他工具需要的 course_id 从这里拿。",
+        "description": "列出这学期在读的课程,含课程 ID、课号、当前总评分数。其他工具需要的 course_id 从这里拿。往期学期的课(老师忘了结课的那种)不在里面。",
         "inputSchema": {"type": "object", "properties": {}},
         "fn": t_courses,
     },

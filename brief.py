@@ -43,7 +43,7 @@ def main() -> int:
         c = CanvasClient()
         me = c.whoami()
         courses = c.courses()
-        items = c.upcoming(21)
+        items = c.upcoming(21, {x["id"] for x in courses})
     except CanvasConfigError as exc:
         print(f"\n  [配置错误] {exc}\n")
         return 1

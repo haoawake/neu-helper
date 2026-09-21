@@ -281,6 +281,21 @@ if not QUICK:
 
     probe("Canvas 连得上", _canvas)
 
+    def _courses():
+        """顺手把学期筛子的结果报出来 —— 被问到"我的课怎么少了一门"时,
+        这一行直接说明筛掉了几门往期的。"""
+        from canvas_api import CanvasClient
+        c = CanvasClient()
+        cur, whole = c.courses(), c.courses(False)
+        drop = len(whole) - len(cur)
+        note = f"这学期 {len(cur)} 门"
+        if drop:
+            note += f",筛掉 {drop} 门往期的"
+        # 只有一种情况算没过:有课但全被筛掉了 —— 那是学期代码判断出了岔子
+        return bool(cur or not whole), note
+
+    probe("课程列表", _courses)
+
 # ═══════════════════════════════════════════════ 汇总
 
 bad = [n for n, good, _ in results if not good]

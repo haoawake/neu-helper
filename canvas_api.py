@@ -13,7 +13,7 @@ import html
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -129,6 +129,67 @@ def urgency(value: str | None) -> str:
     return f"{d:.0f} 天"
 
 
+# ------------------------------------------------- 学期(过滤上学期的遗留)
+
+# NEU 的学期代码:学期名和课号里都带一串 6 位数字,202710 = 2026 年秋。
+# 前 4 位是学年结束的那一年,后 2 位是季度(10 秋 / 30 春 / 40~60 夏),
+# 所以整串数字直接比大小就是时间先后。
+_TERM_CODE = re.compile(r"(?<!\d)(20\d{4})(?!\d)")
+
+# 淘汰的宽限期。换季之后再留这么多天 —— 期末考完成绩还在陆续出,
+# 那几周里上学期的课还得能看见
+STALE_GRACE_DAYS = 45
+
+
+def term_code(course: dict) -> int | None:
+    """这门课属于哪个学期,数字越大越新。抽不出来返回 None。
+
+    学期名是权威的(`202710_1 Fall 2026 Semester Full Term`),优先看它;
+    没有才退到课号。课号是「课程.CRN.学期」,学期在最后一段,所以取**最后**
+    一个匹配 —— CRN 有时也是 6 位数字,取第一个会把它当成学期。
+    """
+    m = _TERM_CODE.search(str((course.get("term") or {}).get("name") or ""))
+    if m:
+        return int(m.group(1))
+    got = _TERM_CODE.findall(str(course.get("course_code") or ""))
+    return int(got[-1]) if got else None
+
+
+def term_code_at(when: datetime) -> int:
+    """那一天该上的是哪个学期 —— 同样是 6 位代码。"""
+    when = when.astimezone()
+    if when.month >= 8:                     # 8 月底就开学了,8 月算秋季
+        return (when.year + 1) * 100 + 10
+    if when.month <= 4:
+        return when.year * 100 + 30
+    return when.year * 100 + 40             # 5~7 月:夏季
+
+
+def past_term(course: dict, now: datetime | None = None) -> bool:
+    """这门课是不是「上学期的遗留」。
+
+    `enrollment_state=active` 只挡掉 Canvas 自己 concluded 掉的注册。NEU 的
+    学期一个日期都不填(term 802 的 start_at / end_at 都是 null),老师又常常
+    忘了手动结课 —— 于是上个学期的课会一直挂在在读列表里,课表和课件同步
+    就跟着把它们一起算进来。
+
+    两条判断,都带 STALE_GRACE_DAYS 的宽限:
+      - Canvas 写了结束日期,而且已经过去很久
+      - 学期代码比「宽限期之前该上的那个学期」还旧
+
+    抽不出学期代码的课一律保留 —— 培训模块和 Group Courses Term 那些课不跟
+    学期走,没有"过期"这回事。门槛是按**日历**算的而不是"取最新的那个学期",
+    所以下学期的课提前挂出来也不会把这学期的挤掉。
+    """
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=STALE_GRACE_DAYS)
+    for ts in ((course.get("term") or {}).get("end_at"), course.get("end_at")):
+        dt = parse_ts(ts)
+        if dt and dt < cutoff:
+            return True
+    code = term_code(course)
+    return code is not None and code < term_code_at(cutoff)
+
+
 # ---------------------------------------------------------------- 客户端
 
 
@@ -186,7 +247,12 @@ class CanvasClient:
     def whoami(self) -> dict:
         return self.get("/users/self/profile")
 
-    def courses(self) -> list[dict]:
+    def courses(self, current_term_only: bool = True) -> list[dict]:
+        """这学期在读的课。
+
+        `current_term_only` 关掉才会把上学期的遗留一起列出来 —— 判断在
+        past_term() 里,注释说明了为什么光靠 Canvas 的注册状态不够。
+        """
         raw = self.get_all(
             "/courses",
             enrollment_state="active",
@@ -194,7 +260,11 @@ class CanvasClient:
         )
         out = []
         for c in raw:
+            # access_restricted_by_date 是 Canvas 自己认定的 past/future
+            # enrollment:它连课名都不给,只有一个 id
             if c.get("access_restricted_by_date"):
+                continue
+            if current_term_only and past_term(c):
                 continue
             enr = (c.get("enrollments") or [{}])[0]
             out.append(
@@ -205,6 +275,7 @@ class CanvasClient:
                     "current_score": enr.get("computed_current_score"),
                     "current_grade": enr.get("computed_current_grade"),
                     "term": (c.get("term") or {}).get("name"),
+                    "term_code": term_code(c),
                     "url": f"{self.base_url}/courses/{c.get('id')}",
                 }
             )
@@ -466,12 +537,21 @@ class CanvasClient:
             tmp.replace(dest)      # 下完再改名,半个文件不会被当成下好了
         return total
 
-    def upcoming(self, days: int = 21) -> list[dict]:
-        """planner/items 把作业、讨论、quiz、日程聚合在一起,是最省事的待办源。"""
+    def upcoming(self, days: int = 21,
+                 course_ids: set[int] | None = None) -> list[dict]:
+        """planner/items 把作业、讨论、quiz、日程聚合在一起,是最省事的待办源。
+
+        planner 是跨课程的,**不认我们在 courses() 里筛掉的那些课** ——
+        上学期没结课的课里有个远期截止的作业,它照样会冒出来。所以给了
+        `course_ids` 就按它过滤(course_id 为空的是个人待办,留着)。
+        """
         start = datetime.now(timezone.utc).date().isoformat()
         raw = self.get_all("/planner/items", start_date=start, max_pages=4)
         out = []
         for item in raw:
+            cid = item.get("course_id")
+            if course_ids is not None and cid and cid not in course_ids:
+                continue
             when = item.get("plannable_date")
             d = days_left(when)
             if d is None or d > days:

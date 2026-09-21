@@ -965,7 +965,8 @@ class Backend:
             me = c.whoami()
             courses = c.courses()
             prefs0 = read_prefs()
-            items = c.upcoming(int(prefs0.get("upcomingDays", 28)))
+            items = c.upcoming(int(prefs0.get("upcomingDays", 28)),
+                               {x["id"] for x in courses})
             try:
                 anns = self._announcements(c, courses, int(prefs0.get("annDays", 10)))
             except Exception:

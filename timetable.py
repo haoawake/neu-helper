@@ -372,13 +372,24 @@ class ScheduleStore:
             self._save()
 
     def view(self, courses: list[dict] | None = None) -> dict:
-        """界面要的那份:自动条目套上手改、藏起该藏的、并上手加的。"""
+        """界面要的那份:自动条目套上手改、藏起该藏的、并上手加的。
+
+        `courses` 是**现在**在读的那几门。存档是一直往上攒的,所以里面还留着
+        上学期解析过的课 —— 那些课时不能再画进格子,否则换了学期旧课表还挂在
+        那儿(老师忘了结课的话,它连"这门课没了"都看不出来)。解析结果留着
+        不删:万一那门课又回到在读列表,不用再花一次模型钱。
+
+        名单是空的(仪表盘还没抓完)就全部照画 —— 那是"还不知道",
+        不是"都过期了"。
+        """
         with self._lock:
             d = json.loads(json.dumps(self._d))   # 深拷贝,下面要改
         short = {str(x["id"]): x.get("short") or x.get("code")
                  for x in (courses or [])}
         items, notes, parsed, quiet = [], [], [], []
         for cid, box in d["courses"].items():
+            if short and cid not in short:
+                continue
             cs = short.get(cid, cid)
             # 一条都没抽出来的课(培训模块、orientation)只会产出一句
             # "这门课没有每周固定安排" —— 那不是信息,是噪音。收进 quiet,
