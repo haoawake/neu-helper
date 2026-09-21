@@ -367,7 +367,7 @@ function mdInline(text, parent) {
   }
 }
 
-const MD_BLOCK_START = /^(#{1,6}\s|```|\s*[-*+]\s|\s*\d+\.|\s*(?:\$\$|\\\[))/;
+const MD_BLOCK_START = /^(#{1,6}\s|```|\s*[-*+]\s|\s*\d+\.\s|\s*(?:\$\$|\\\[))/;
 
 function renderMarkdown(raw, container) {
   container.textContent = '';
@@ -1760,6 +1760,9 @@ function openWkSheet(it) {
     if ($(id)) $(id).hidden = isMail;
   });
   $('btnWfMail').hidden = !(isMail && it.mid);
+  // 星期对邮件日程是**算出来的**(日期决定),不是能改的。留着能看清是哪天,
+  // 但禁掉 —— 不然改了它以为生效了,而 wkMailForm 根本不发这个字段
+  $('wfWeekday').disabled = isMail;
   $('weekSheetTitle').textContent = mk ? '加一条'
     : (isMail ? '这条来自邮件' : '改这一条');
   $('wfTitle').value = it ? (it.title || '') : '';
@@ -1773,7 +1776,8 @@ function openWkSheet(it) {
   $('wfUrl').value = it ? (it.url || '') : '';
   $('wfNote').value = it ? (it.note || '') : '';
   $('wfHint').textContent = isMail
-    ? '这条是从邮件里抽出来的。时间留空 = 全天,摆到顶上那条全天条里;删掉不会再回来。'
+    ? `这条是从邮件里抽出来的${it.date ? `(${it.date})` : ''}。`
+      + '时间留空 = 全天,摆到顶上那条全天条里;删掉不会再回来。'
     : (it && it.auto
       ? '这条是从课程页面里抽出来的。改了之后,重新解析不会把你的改动冲掉。'
       : '');
@@ -1980,6 +1984,8 @@ async function loadMail() {
   state.mailFill = d.fill || null;
   state.mailBoxes = d.boxes || null;
   state.mailTrashTags = d.trash_tags || [];
+  // 标签的定义(和进 prompt 的是同一份)—— 设置里那排标签靠它显示提示
+  state.mailTagDefs = d.tag_defs || state.mailTagDefs || {};
   state.mailGroups = d.groups || [];
   renderBoxBtn();
   renderPersonSel();
@@ -2867,8 +2873,15 @@ function renderMailOne(m) {
     box.appendChild(el('div', 'one-sum', m.rank.summary));
   }
 
-  // 级别 + 标签
+  // 级别 + 标签 + 日程
   const tags = el('div', 'one-tags');
+  if (m.dated) {
+    const cal = el('button', 'dated-chip', '已进日程');
+    cal.type = 'button';
+    cal.title = '这封信里有带日期的事,已经画进日程表了 —— 点这里去看';
+    cal.addEventListener('click', () => openWeek());
+    tags.appendChild(cal);
+  }
   if (m.rank) {
     const chip = el('span', 'mail-rank' + (m.rank.pending ? ' is-pending' : ''));
     chip.dataset.lv = String(m.rank.level);
@@ -3597,6 +3610,7 @@ function wireMailPrefs() {
   $('btnMailAnalyze').addEventListener('click', () => runAnalyze(false));
   $('btnMailRedo').addEventListener('click', () => runAnalyze(true));
   $('btnMailRelink').addEventListener('click', () => runRelink());
+  $('btnMailRedate').addEventListener('click', () => runRedate());
 
   $('btnTagAdd').addEventListener('click', addTag);
   $('btnGroupAdd').addEventListener('click', addGroup);
@@ -4777,6 +4791,10 @@ function tagChip(t, n, isBad) {
   const chip = el('span', 'tag-chip tag-cat' + (isBad ? ' is-trash' : ''));
   chip.draggable = true;
   chip.dataset.tag = t;
+  // 悬停看定义。**和进 prompt 的是同一份** —— 模型按这句话判,你也按这句话
+  // 理解,不会两头对不上。模型自己造的标签没有定义,那就说清它是造出来的
+  const def = (state.mailTagDefs || {})[t];
+  chip.title = def ? `${t} —— ${def}` : `${t}(分析时自己造的标签,没有内置定义)`;
   chip.appendChild(el('span', null, t));
   if (n) chip.appendChild(el('span', 'tag-n', String(n)));
   chip.addEventListener('dragstart', (e) => {
@@ -4906,6 +4924,28 @@ async function runRelink() {
     const r = await apiPost('/api/mail/analyze', { relink: true });
     if (!r.dropped) {
       $('aiState').textContent = '没有需要补的 —— 带链接的信都挑过了';
+      return;
+    }
+    renderAiState(r.ai);
+  } catch (e) {
+    $('aiState').textContent = '没跑起来:' + ((e && e.message) || e);
+  }
+}
+
+/* 补抽日程。**和「全部重判」分开**:只动最近 80 封里还没抽过日程的那些,
+   老存量不重付一次钱。日程和标签、摘要是同一次调用的产出,所以这几封的
+   标签会顺带按新规则更新 —— 那不是浪费。 */
+async function runRedate() {
+  if (!window.confirm(
+    '给最近 80 封里还没抽过日程的邮件补一次。\n'
+    + '面试、讲座、交表截止会被画进日程表。\n'
+    + '这会调一次模型,要花钱(通常几毛)。\n'
+    + '这几封的标签和摘要会顺带按新规则重判。\n\n继续吗?')) return;
+  $('aiState').textContent = '正在补抽日程…';
+  try {
+    const r = await apiPost('/api/mail/analyze', { redate: true });
+    if (!r.dropped) {
+      $('aiState').textContent = '没有需要补的 —— 最近这些信都抽过日程了';
       return;
     }
     renderAiState(r.ai);

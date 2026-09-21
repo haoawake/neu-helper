@@ -813,6 +813,10 @@ def build_mail_prompt(store: MailStore, history, today: str,
                 lines.append(f"  (还没过目)正文开头:{snip[:200]}")
         if m.get("note"):
             lines.append(f"  我的备注:{m['note']}")
+        # 已经进日程表的,标一句。**简报和日程表别两头各说一遍** ——
+        # 这一句是给模型的提示:那件事有着落了,不用再当成"要你安排"来播
+        if m.get("dated"):
+            lines.append("  (这封里的日期已经进日程表了)")
     if history:
         lines += ["", "<以往邮件简报>",
                   "(按时间从早到晚。先跟这些对比,说变化,别每天重念一样的清单)", ""]

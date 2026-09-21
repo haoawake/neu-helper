@@ -80,6 +80,9 @@ TOKEN = secrets.token_urlsafe(16)
 # 邮件列表一页多少封。放在这儿而不是靠近窗口那几个常量:list_messages 的默认
 # 参数在类定义时就求值,那会儿文件后半段还没执行到
 PAGE_SIZE = 50
+# 「补抽日程」一次最多重判多少封。半年前那封信里的截止日期早过去了,
+# 为它花钱没意义 —— 这个上限就是这个意思
+REDATE_LIMIT = 80
 # 悬浮球停一秒弹出来的那条备忘录窄栏(逻辑像素)
 PEEK_SIZE = (300, 460)
 HTTP_LOG = os.environ.get("CANVAS_HELPER_HTTPLOG") == "1"
@@ -2463,6 +2466,9 @@ def api_mail():
         # 标签按钮要跟看到的列表对得上
         "tag_counts": backend.mail_ai.tag_counts({m["id"] for m in msgs}),
         "tags": read_prefs().get("mailTags") or mailai.DEFAULT_TAGS,
+        # 每个标签是什么意思。**这份定义就是进 prompt 的那一份** ——
+        # 界面上悬停看到的和模型判断时读到的是同一句话,不会两头对不上
+        "tag_defs": dict(mailai.TAG_DEFS),
         "days": backend.mail.days()[:60],
     })
 
@@ -2553,10 +2559,16 @@ def api_mail_analyze():
 
     redo=1    把已有结论全扔了重判(改完个人信息想让它重新看一遍的时候用)
     relink=1  只补**链接挑选** —— 带链接、但结论里还没有挑选结果的那些信
+    redate=1  只补**日程** —— 结论里还没有 events 的那些信,而且只补最近
+              REDATE_LIMIT 封
 
-    两个都要花钱,所以都得显式点。relink 存在的意义是省钱:加"AI 挑链接"
-    这个功能之前过目的信没有挑选结果,而为了补上它去把标签和摘要也重付
-    一次不划算。
+    三个都要花钱,所以都得显式点。relink / redate 存在的意义是省钱:这两个
+    功能上线之前过目的信没有对应的字段,而为了补上它们去把全部存量重付一次
+    不划算。redate 还额外限了封数 —— 半年前那封信里的截止日期早过去了,
+    为它花钱没有意义。
+
+    **补日程会把这几封的标签和摘要一起重判**(它们是同一次调用的产出),
+    这不是浪费:标签体系也刚改过,顺带就新了。
     """
     d = request.get_json(silent=True) or {}
     redo = bool(d.get("redo"))
@@ -2566,6 +2578,11 @@ def api_mail_analyze():
                  if (m.get("links") or [])
                  and backend.mail_ai.has(m["id"])
                  and "links" not in backend.mail_ai.get(m["id"])]
+        dropped = backend.mail_ai.drop(stale)
+    if d.get("redate") and not redo:
+        stale = [m["id"] for m in backend.mail.all(limit=REDATE_LIMIT)
+                 if backend.mail_ai.has(m["id"])
+                 and "events" not in backend.mail_ai.get(m["id"])]
         dropped = backend.mail_ai.drop(stale)
     started = backend.analyzer.analyze_now(force_all=redo)
     return jsonify({"ok": True, "started": started, "dropped": dropped,

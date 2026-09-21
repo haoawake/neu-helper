@@ -1710,6 +1710,14 @@ body:not([data-page="mail"]) .layout-mail { display: none !important; }
 body[data-page="week"] .layout:not(.layout-week) { display: none; }
 body:not([data-page="week"]) .layout-week { display: none !important; }
 .layout-week { grid-template-columns: minmax(0, 1fr); }
+/* **对话框形态下没有日程页。** 那一屏是七列的表格,而对话框只有几百像素宽,
+   而且这个形态把 .pane-data 整个藏起来了(它就剩一条对话)—— 日程页里除了
+   .pane-data 什么都没有,不管的话切成对话框就是一片空白。
+   所以这个形态里它退回主屏(那儿是对话),tab 也藏掉。**state.page 不动** ——
+   变回完整窗口的时候还在日程页上 */
+body[data-mode="chat"] .page-seg .seg-btn[data-v="week"] { display: none; }
+body[data-mode="chat"][data-page="week"] .layout-week { display: none !important; }
+body[data-mode="chat"][data-page="week"] .layout-main { display: grid; }
 /* 收成对话框的时候邮箱页也只留右栏 */
 body[data-mode="chat"] #paneMail { display: none; }
 body[data-mode="chat"] .layout-mail {
