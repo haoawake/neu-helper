@@ -354,8 +354,13 @@ def build_prompt(msgs: list[dict], facts, tags, tzname: str = "") -> str:
         "  · 有明确起止时刻就给 start 和 end(HH:MM,24 小时制);只说了一个",
         "    时刻就只给 start;一个时刻都没有(只知道是哪天)就两个都别给 ——",
         "    那种会画成全天,是对的",
-        "  · 信里写了时区(ET / EST / Pacific / 北京时间)就原样填进 tz,",
-        "    **不要自己换算**" + (f"(本机是 {tzname},换算交给程序做)" if tzname else ""),
+        "  · **信里只要写了时区就必须填进 tz**(ET / EST / EDT / PT / Pacific /",
+        "    UTC / GMT / 北京时间 …),原样抄,**不要自己换算**"
+        + (f"(本机是 {tzname},换算交给程序做)" if tzname else ""),
+        "    漏了这一栏,时间会按本地时间画上去,差好几个小时 —— 波士顿发来的",
+        "    「3pm ET」会变成下午三点,而它其实是中午十二点",
+        "  · **00:00 也是时刻**。「11 月 4 日 00:00 (UTC) 截止」要给",
+        "    date=2026-11-04、start=00:00、tz=UTC,不要当成只知道哪一天",
         "  · kind:交表、报名、提交这类截止填 due;要到场的填 meet;别的填 other",
         "  · title 8~20 字,说清「什么事」。别照抄主题的营销话术,别写发件人名",
         "  · **群发的活动预告、营销日历、订阅推送里的「本周活动」不要抽** ——",
@@ -586,7 +591,9 @@ def clean_events(items, anchor: date | None) -> list[dict]:
                 it.update({"start": start, "end": end, "allday": False})
         if was:
             it["was"] = was                # 原文时刻,给 tooltip
-        if tz:
+        # 全天的条目**不标时区**:压根没有时刻,"没换算"这句话无从谈起,
+        # 摆在块上只是噪音(实测模型给过 allday + tz=UTC 这种组合)
+        if tz and not it.get("allday"):
             it["tz"] = tz                  # 认不出的时区,界面上照实标
         out.append(it)
         if len(out) >= MAX_EVENTS:
