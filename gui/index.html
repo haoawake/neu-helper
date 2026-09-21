@@ -28,6 +28,11 @@
     <button class="seg-btn" data-v="mail" role="tab">
       邮箱<span class="page-badge" id="mailBadge" hidden></span>
     </button>
+    <!-- 日程是**两边共同**的:课表来自课程正文,日程来自邮件。所以它
+         不该埋在学业页的一个小横条后面,而是和那两页并列 -->
+    <button class="seg-btn" data-v="week" role="tab">
+      日程<span class="page-badge" id="weekBadge" hidden></span>
+    </button>
   </div>
 
   <div class="tb-actions">
@@ -80,6 +85,9 @@
       <button type="button" class="upd-what" id="updWhat">改了什么</button>
       <button type="button" class="upd-x" id="updLater" title="这次先不提">✕</button>
     </div>
+    <!-- 更新说明:**你这个版本到最新版之间每一版**的说明,不是只有最新那份
+         —— 落后三个版本的人该看到这三版加起来改了什么。点「改了什么」展开 -->
+    <div id="updNotes" class="upd-notes" hidden></div>
     <div id="banner" class="banner" hidden></div>
     <div id="overdueAlert" class="alert" hidden></div>
 
@@ -159,44 +167,6 @@
      <footer class="pane-foot muted" id="courseFoot"></footer>
    </div>
 
-   <!-- ─────── 每周课程表 ───────
-        横轴周日→周六,纵轴时刻。上课时间和 office hour 是从课程首页 /
-        syllabus / 公告的**正文**里抽出来的(Canvas 没有这两样的结构化接口,
-        理由见 timetable.py),所以每个格子都能手改,改过的不会被重新解析冲掉。 -->
-   <div id="weekView" hidden>
-     <div class="course-head">
-       <button class="icon-btn" id="btnWeekBack" title="返回仪表盘">
-         <span aria-hidden="true">←</span><span class="sr">返回</span>
-       </button>
-       <div class="course-title">
-         <div class="course-name">课程表</div>
-         <div class="course-sub muted" id="weekSub"></div>
-       </div>
-       <button class="link-btn" id="btnWeekFull" title="在「只画有课的时段」和「0–24 全画」之间切">全天</button>
-       <button class="link-btn" id="btnWeekAdd">新增</button>
-       <button class="link-btn" id="btnWeekParse" title="重新从课程正文里抽一遍(要跑模型)">重新解析</button>
-     </div>
-
-     <div class="week-nav">
-       <button class="icon-btn" id="btnWeekPrev" title="上一周">
-         <span aria-hidden="true">‹</span><span class="sr">上一周</span>
-       </button>
-       <span class="week-range" id="weekRange"></span>
-       <button class="icon-btn" id="btnWeekNext" title="下一周">
-         <span aria-hidden="true">›</span><span class="sr">下一周</span>
-       </button>
-       <button class="link-btn" id="btnWeekNow" hidden>回到本周</button>
-       <span class="tab-spacer"></span>
-       <span class="muted" id="weekState"></span>
-     </div>
-
-     <div id="weekBanner" class="banner" hidden></div>
-     <div class="week-grid" id="weekGrid"></div>
-     <!-- 模型看见了、但排不进格子的话:"TA office hour 还没公布"之类。
-          这一段比空格子有信息量 —— 空格子说不清是没有还是没抓到 -->
-     <div class="week-notes" id="weekNotes"></div>
-     <footer class="pane-foot muted" id="weekFoot"></footer>
-   </div>
   </section>
 
   <!-- ─────────────── 右栏:简报 / 对话 ─────────────── -->
@@ -284,6 +254,52 @@
 <!-- ═══════════════ 邮箱子页面 ═══════════════
      左边收件箱,右边邮件简报 / 邮件对话。**历史记录和课业那套完全分开**:
      data/mail_briefings.json、data/mail_chats.json,CLI 通道也是独立的两条。 -->
+<!-- ═══════════ 日程(顶层页)═══════════
+     一整屏,不分左右栏 —— 这一页的用处就是一眼看完整周,
+     左右分栏只会把七列压窄。显隐由 body[data-page] 的 CSS 管 -->
+<main class="layout layout-week" id="layoutWeek">
+  <section class="pane pane-data">
+   <!-- ─────── 每周课程表 ───────
+        横轴周日→周六,纵轴时刻。上课时间和 office hour 是从课程首页 /
+        syllabus / 公告的**正文**里抽出来的(Canvas 没有这两样的结构化接口,
+        理由见 timetable.py),所以每个格子都能手改,改过的不会被重新解析冲掉。 -->
+   <div id="weekView" hidden>
+     <div class="course-head">
+       <button class="icon-btn" id="btnWeekBack" title="回到学业页">
+         <span aria-hidden="true">←</span><span class="sr">返回</span>
+       </button>
+       <div class="course-title">
+         <div class="course-name">本周日程</div>
+         <div class="course-sub muted" id="weekSub"></div>
+       </div>
+       <button class="link-btn" id="btnWeekFull" title="在「只画有课的时段」和「0–24 全画」之间切">全天</button>
+       <button class="link-btn" id="btnWeekAdd">新增</button>
+       <button class="link-btn" id="btnWeekParse" title="重新从课程正文里抽一遍(要跑模型)">重新解析</button>
+     </div>
+
+     <div class="week-nav">
+       <button class="icon-btn" id="btnWeekPrev" title="上一周">
+         <span aria-hidden="true">‹</span><span class="sr">上一周</span>
+       </button>
+       <span class="week-range" id="weekRange"></span>
+       <button class="icon-btn" id="btnWeekNext" title="下一周">
+         <span aria-hidden="true">›</span><span class="sr">下一周</span>
+       </button>
+       <button class="link-btn" id="btnWeekNow" hidden>回到本周</button>
+       <span class="tab-spacer"></span>
+       <span class="muted" id="weekState"></span>
+     </div>
+
+     <div id="weekBanner" class="banner" hidden></div>
+     <div class="week-grid" id="weekGrid"></div>
+     <!-- 模型看见了、但排不进格子的话:"TA office hour 还没公布"之类。
+          这一段比空格子有信息量 —— 空格子说不清是没有还是没抓到 -->
+     <div class="week-notes" id="weekNotes"></div>
+     <footer class="pane-foot muted" id="weekFoot"></footer>
+   </div>
+  </section>
+</main>
+
 <!-- 显隐由 body[data-page] 的 CSS 管,**不要**加 hidden 属性:
      [hidden]{display:none!important} 会压过页面切换那条规则,整屏空白 -->
 <main class="layout layout-mail" id="layoutMail">
@@ -416,7 +432,7 @@
           <label class="pref-label" for="wfTitle">名称</label>
           <input type="text" id="wfTitle" class="num num-wide" maxlength="60">
         </div>
-        <div class="pref-row">
+        <div class="pref-row" id="wfRowKind">
           <label class="pref-label" for="wfKind">类型</label>
           <select id="wfKind" class="select">
             <option value="lecture">上课</option>
@@ -437,17 +453,17 @@
           <input type="time" id="wfStart" class="num">
           <input type="time" id="wfEnd" class="num">
         </div>
-        <div class="pref-row">
+        <div class="pref-row" id="wfRowWho">
           <label class="pref-label" for="wfWho">谁</label>
           <input type="text" id="wfWho" class="num num-wide" maxlength="60"
                  placeholder="老师 / TA 的名字">
         </div>
-        <div class="pref-row">
+        <div class="pref-row" id="wfRowPlace">
           <label class="pref-label" for="wfPlace">地点</label>
           <input type="text" id="wfPlace" class="num num-wide" maxlength="60"
                  placeholder="教室号 / Zoom">
         </div>
-        <div class="pref-row">
+        <div class="pref-row" id="wfRowUrl">
           <label class="pref-label" for="wfUrl">链接</label>
           <input type="text" id="wfUrl" class="num num-wide" maxlength="400"
                  placeholder="Zoom / 预约链接">
@@ -462,7 +478,9 @@
     <div class="sheet-foot">
       <button class="btn" id="btnWfSave">保存</button>
       <button class="btn btn-quiet" id="btnWfRevert" hidden
-              title="丢掉手改,回到从课程正文里抽出来的样子">还原</button>
+              title="丢掉手改,回到抽出来的样子">还原</button>
+      <button class="btn btn-quiet" id="btnWfMail" hidden
+              title="这条是从邮件里抽出来的,去看那封信">看这封邮件</button>
       <span class="tab-spacer"></span>
       <button class="btn btn-quiet link-danger" id="btnWfDel">删除</button>
     </div>
@@ -706,6 +724,13 @@
               <option value="sonnet">sonnet(均衡)</option>
               <option value="opus">opus(最准)</option>
             </select>
+          </div>
+          <div class="pref-row">
+            <label class="pref-label" for="swSchedMail"
+                   title="邮件里有具体日期的事(面试、讲座、截止)也画进格子;只知道哪天的摆在顶上那条全天条里">邮件里的日程也画上</label>
+            <button class="switch" id="swSchedMail" role="switch" aria-checked="true">
+              <span class="switch-dot"></span>
+            </button>
           </div>
           <div class="pref-row">
             <label class="pref-label" for="swSchedMemos"

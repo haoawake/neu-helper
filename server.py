@@ -54,6 +54,7 @@ import mailbox as mailmod
 import mailai
 import mailflags
 import mailparts
+import mailevents
 import mailpeople
 import memos
 import timetable as tt
@@ -159,6 +160,10 @@ class Backend:
         self.mail_flags = mailflags.FlagStore(HERE / "data" / "mail_flags.json")
         # 发件人分组。跟着地址走,不跟着邮件走 —— 所以也不能塞进滚动缓存
         self.people = mailpeople.PeopleStore(HERE / "data" / "mail_people.json")
+        # 邮件日程的删改记录。日程本体在 mail_ai.json 每封信那条里,
+        # 这里只有覆盖层 —— 理由见 mailevents 的模块注释
+        self.mail_events = mailevents.EventStore(
+            HERE / "data" / "mail_events.json")
         # AI 过目的结果。单独一份,和 mail.json 的滚动缓存解耦 ——
         # 一封信只过一次模型,这份存档就是"过过了"的凭据
         self.mail_ai = mailai.TagStore(HERE / "data" / "mail_ai.json")
@@ -169,7 +174,11 @@ class Backend:
             model_getter=lambda: read_prefs().get("mailModel") or "sonnet",
             on_event=lambda st: self.push_mail(self.mail_fetcher.snapshot()),
             on_new_tags=self._learn_tags,
+            # 发件人分组是日程那道闸要用的:分了组的人(必看/好友/熟人)
+            # 说周四见就是真要见,渠道信的"活动预告"则一律不收
+            group_getter=lambda who: self.people.group_of(who or ""),
         )
+
         # 补抓正文的进度。和收邮件分开:收邮件是"有没有新的",
         # 补抓是"存量里还有多少封没取过全文"
         self.fill_state = {"running": False, "done": 0, "total": 0,
@@ -615,6 +624,36 @@ class Backend:
         if read_prefs().get("mailAiOn", True):
             self.analyzer.analyze_now()
 
+    def _migrate_mail_prefs(self) -> None:
+        """把新增的标签和「我的情况」栏位补进已有的存档。
+
+        **不能只改 DEFAULT_PREFS。** 那份默认值只在存档里**没有**这个键时
+        才生效,而 mailTags / mailFacts 一开始就被写进 prefs.json 了 ——
+        于是老用户永远看不到新加的「诈骗」「订阅」标签,也没有「我在用的
+        服务」那一栏可填。所以补一次:只增不减,用户删掉过的不硬塞回来
+        (靠"这个键从来没出现过"来区分,见下面的 seen)。
+        """
+        prefs = read_prefs()
+        patch = {}
+        tags = list(prefs.get("mailTags") or [])
+        seen = set(prefs.get("mailTagsSeen") or []) | set(tags)
+        fresh = [t for t in mailai.DEFAULT_TAGS if t not in seen]
+        if fresh:
+            patch["mailTags"] = tags + fresh
+            patch["mailTagsSeen"] = sorted(seen | set(fresh))
+        facts = list(prefs.get("mailFacts") or [])
+        keys = {str(f.get("k") or "") for f in facts if isinstance(f, dict)}
+        seen_k = set(prefs.get("mailFactsSeen") or []) | keys
+        add = [f for f in DEFAULT_PREFS["mailFacts"]
+               if f["k"] not in seen_k]
+        if add:
+            patch["mailFacts"] = facts + [dict(f) for f in add]
+            patch["mailFactsSeen"] = sorted(seen_k | {f["k"] for f in add})
+        if patch:
+            write_prefs(patch)
+            print(f"[mail] 补了 {len(fresh)} 个标签、{len(add)} 条个人信息栏位",
+                  file=sys.stderr, flush=True)
+
     def _learn_tags(self, added: list[str]) -> None:
         """模型新造的标签收进目录 —— 下次它自己看得到,用户也能删。"""
         cur = list(read_prefs().get("mailTags") or mailai.DEFAULT_TAGS)
@@ -629,6 +668,11 @@ class Backend:
         级别的来源按优先级:自己标的重点 > AI 过目的结论 > 内置粗判。
         粗判会带 pending 标记 —— 界面上要看得出"这还不是定论"。
         """
+        # 哪些信带日程 —— 算一次给整页用(每封单算要把几百条日程拍平几十遍)
+        try:
+            dated = self.mail_event_ids()
+        except Exception:
+            dated = set()
         out = []
         for m in msgs:
             f = self.mail_flags.get(m["id"])
@@ -638,6 +682,9 @@ class Backend:
                         "note": f.get("note") or "",
                         "star_days": self.mail_flags.days_since(f),
                         "person": self.people.group_of(m.get("from", "")),
+                        # 这封信里的事进了日程表。**删掉那条日程之后就不挂了**
+                        # —— 标识说的是"日程表上有它",不是"抽过"
+                        "dated": m["id"] in dated,
                         "rank": rank})
         return out
 
@@ -860,8 +907,20 @@ class Backend:
         if not prefs.get("updateToast", True):
             return
         self._told_version = latest
-        self.notify(f"有新版本 v{latest}", "点这里去更新。",
-                    go="update", force=True)
+        # 弹窗里带一句"改了什么"。**弹窗只有两行**,所以只念最新那一版第一条;
+        # 落后好几版的时候说清一共几版,全文在横幅里点「改了什么」展开
+        hist = info.get("history") or []
+        head = ""
+        for line in (hist[0].get("notes") if hist else info.get("notes") or "").splitlines():
+            t = line.strip().lstrip("-*#0123456789. ").strip()
+            if t:
+                head = t[:40]
+                break
+        body = "点这里去更新。"
+        if head:
+            body = (f"共 {len(hist)} 个版本:{head}…" if len(hist) > 1
+                    else f"更新内容:{head}")
+        self.notify(f"有新版本 v{latest}", body, go="update", force=True)
 
     def start_update_watch(self) -> None:
         """开机查一次(等 40 秒,别和启动抢),之后每 CHECK_EVERY 一次。"""
@@ -1216,6 +1275,40 @@ class Backend:
             "url": a.get("html_url"),
         }
 
+    # ------------------------------------------------------------ 邮件日程
+
+    def mail_event_list(self) -> list[dict]:
+        """所有还在的邮件日程(拍平、去重、套过删改),新的日期在前。
+
+        **以 mail_ai.json 为准去遍历,不是以 mail.json。** 本地邮件索引是
+        滚动的(每个账号留 300 封),而过目结果留 2000 条 —— 顺着邮件列表走
+        的话,一封滚出去的信里那件十月的事就凭空消失了。主题和收信日能查到
+        就查(给块上那行说明用),查不到就退回过目时间。
+        """
+        rows = []
+        for mid, evs in self.mail_ai.events().items():
+            m = self.mail.get(mid) or {}
+            ts = str(m.get("ts") or "")
+            rows.append({
+                "mid": mid,
+                "subject": m.get("subject") or "",
+                "day": ts[:10] or (self.mail_ai.get(mid).get("at") or "")[:10],
+                "ts": ts or (self.mail_ai.get(mid).get("at") or ""),
+                "events": evs,
+            })
+        # 去重留的是先遇到的那条,所以必须**新的在前** —— 一件事被提醒三遍,
+        # 最后那封信的时间才是改过之后的
+        rows.sort(key=lambda r: r["ts"], reverse=True)
+        return self.mail_events.apply(mailevents.flatten(rows))
+
+    def mail_event_ids(self) -> set:
+        """哪些邮件带日程 —— 列表上那个小标识要用。
+
+        只看**还没被删掉**的:用户把那条日程删了,卡片上就不该还挂着标。
+        """
+        keep = {e["mid"] for e in self.mail_event_list() if e.get("mid")}
+        return keep
+
     # ------------------------------------------------------------ 课表
 
     def schedule_view(self, week_start: str = "") -> dict:
@@ -1236,6 +1329,16 @@ class Backend:
             out["items"] += tt.memo_items(self.memos.all(include_done=False), week)
         except Exception:
             pass
+        # 邮件日程。有时刻的进格子,只知道哪天的走表头下面那条全天条 ——
+        # 全天画成 00:00–23:59 会把纵轴撑成 0–24,两门真课挤成一条缝
+        out["allday"] = []
+        try:
+            timed, allday = mailevents.week_items(self.mail_event_list(), week)
+            out["items"] += timed
+            out["allday"] = allday
+        except Exception as exc:                   # noqa: BLE001
+            print(f"[schedule] 邮件日程没排上:{type(exc).__name__}: {exc}",
+                  file=sys.stderr, flush=True)
         out["items"].sort(key=lambda x: (x["weekday"], x["start"]))
         out["state"] = dict(self.sched_state)
         # 没有课程列表(仪表盘还没加载)时前端要能区分"还没抓"和"真的没有"
@@ -1391,27 +1494,44 @@ def api_schedule_item():
 
     自动抽出来的条目改不进存档本身(下次解析就冲掉了),改的是 edits 里的
     覆盖层;手加的条目则是真改真删。前端不用关心这个区别 —— 看 id 前缀就行,
-    u 开头是手加的。
+    u 开头是手加的,`mail:` 开头是从邮件里抽的。
+
+    邮件日程走的是另一份存档(mail_events.json)。**不能混进课表那份** ——
+    「清空课表」会把它整个重置,那样被删掉的邮件日程会全回来。
     """
     d = request.get_json(silent=True) or {}
     act, iid = d.get("action"), (d.get("id") or "")
+    mail = iid.startswith("mail:")
     try:
         if act == "add":
             return jsonify({"ok": True, "item": backend.schedule.add_manual(d)})
         if act == "delete":
+            if mail:
+                # 邮件日程「删」= 藏起来。那封信不会再过第二次模型,所以
+                # 它不会被请回来;记下来是为了重装/换机之后也还是删掉的
+                backend.mail_events.hide(iid)
+                return jsonify({"ok": True})
             return jsonify({"ok": backend.schedule.delete(iid)})
         if act == "edit":
             patch = {k: v for k, v in d.items() if k not in ("action", "id")}
+            if mail:
+                backend.mail_events.edit(iid, patch)
+                return jsonify({"ok": True})
             if iid.startswith("u"):
                 return jsonify({"ok": backend.schedule.edit_manual(iid, patch)})
             backend.schedule.edit(iid, patch)
             return jsonify({"ok": True})
         if act == "revert":          # 撤销手改,回到解析出来的样子
+            if mail:
+                backend.mail_events.edit(iid, {})
+                return jsonify({"ok": True})
             backend.schedule.edit(iid, {})
             return jsonify({"ok": True})
         if act == "reset":
             backend.schedule.reset()
             return jsonify({"ok": True})
+        if act == "reset-mail":      # 只把邮件日程的删改清掉
+            return jsonify({"ok": True, "n": backend.mail_events.reset()})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": False, "error": f"未知操作 {act}"}), 400
@@ -1678,9 +1798,18 @@ DEFAULT_PREFS = {
         {"k": "我的专业", "v": ""},
         {"k": "我的住址", "v": ""},
         {"k": "我常用的软件", "v": ""},
+        # 填了这一栏,运营商/宽带/保险的续费和账单提醒才会被当成正经事务 ——
+        # 不填的话模型只能按通用标准判,催你交钱的信很容易被当成营销或者诈骗
+        {"k": "我在用的服务", "v": ""},
         {"k": "我在找什么", "v": ""},
     ],
     "mailTags": list(mailai.DEFAULT_TAGS),   # 标签目录,可增可删
+    # 「这些标签/栏位曾经出现过」。**只用来判断该不该自动补** ——
+    # 你手动删掉的不会被下次启动硬塞回来,见 Backend._migrate_mail_prefs
+    # 默认必须是**空的**:read_prefs 会用默认值补上缺失的键,要是这里写成
+    # DEFAULT_TAGS,老存档一读出来就"见过"全部新标签,迁移就成了空操作
+    "mailTagsSeen": [],
+    "mailFactsSeen": [],
     # 坏标签:打了这些标签的信不进收件箱,只在垃圾箱里
     "mailTrashTags": [],
     "mailGroups": list(mailpeople.DEFAULT_GROUPS),   # 发件人分组的名字
@@ -1708,6 +1837,7 @@ DEFAULT_PREFS = {
     "schedModel": "sonnet",  # 从课程正文里抽课时表用哪个模型
     "schedFull": False,      # 纵轴画满 0–24,还是只画有内容的时段
     "schedMemos": True,      # 备忘录里的每周/某天条目也画进格子
+    "schedMail": True,       # 邮件里抽出来的日程也画进格子
 }
 PREF_KEYS = set(DEFAULT_PREFS)
 
@@ -1736,6 +1866,16 @@ def write_prefs(patch: dict) -> dict:
         except Exception:
             pass          # 存不下去不该让界面上的操作失败
     return d
+
+
+# 补新增的标签和「我的情况」栏位(见 Backend._migrate_mail_prefs)。
+# **必须放在 read_prefs / write_prefs 定义之后** —— 模块是从上往下执行的,
+# 写在 Backend.__init__ 里会在那两个函数还不存在时就跑,NameError。
+try:
+    backend._migrate_mail_prefs()
+except Exception as _exc:                          # noqa: BLE001
+    print(f"[mail] 偏好迁移跳过:{type(_exc).__name__}: {_exc}",
+          file=sys.stderr, flush=True)
 
 
 def dark_mode() -> bool:
@@ -2325,6 +2465,21 @@ def api_mail():
         "tags": read_prefs().get("mailTags") or mailai.DEFAULT_TAGS,
         "days": backend.mail.days()[:60],
     })
+
+
+@app.get("/api/mail/one")
+def api_mail_one():
+    """按 id 取一封信(带评级、标注、分组)。
+
+    日程表上点「看这封邮件」用它 —— 那儿只有邮件 id,而列表是分页的,
+    要找的那封可能根本不在当前这页里。
+    """
+    mid = request.args.get("id") or ""
+    m = backend.mail.get(mid)
+    if not m:
+        return jsonify({"ok": False,
+                        "error": "这封信已经滚出本地索引了(只留最近 300 封)"}), 404
+    return jsonify({"ok": True, "message": backend.rate_messages([m])[0]})
 
 
 @app.get("/api/mail/body")

@@ -150,9 +150,185 @@ function openExternal(url) {
    绝不走 innerHTML。支持:标题、无序/有序列表、围栏代码、粗体、斜体、
    行内代码、链接。 */
 
+/* ─────────────────────────── 公式 ───────────────────────────
+
+   **为什么不上 KaTeX。** 这是个本地应用,没有 CDN 可用(联网渲染公式还会把
+   你在看什么告诉别人),而把 KaTeX 整个塞进仓库是 300KB 的字体加脚本 ——
+   为了偶尔一个 Θ(n log n) 不值得。
+
+   所以这里认的是**一个子集**:上下标、分式、根号、希腊字母和常用符号。
+   算法课和数据课的对话里出现的基本就是这些(O(n^2)、\sum_{i=1}^{n}、
+   \Theta(n \log n))。认不出来的命令**原样显示**,不猜 ——
+   显示成 `oobar` 你一眼知道是没支持,猜错了反而看不出来。 */
+
+const MATH_SYM = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', zeta: 'ζ',
+  eta: 'η', theta: 'θ', iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ',
+  nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ',
+  phi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+  sum: '∑', prod: '∏', int: '∫', infty: '∞', partial: '∂', nabla: '∇',
+  le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', neq: '≠', equiv: '≡',
+  approx: '≈', sim: '∼', propto: '∝', pm: '±', mp: '∓',
+  times: '×', div: '÷', cdot: '·', ast: '∗', star: '⋆',
+  in: '∈', notin: '∉', subset: '⊂', subseteq: '⊆', supset: '⊃',
+  cup: '∪', cap: '∩', emptyset: '∅', forall: '∀', exists: '∃',
+  land: '∧', lor: '∨', neg: '¬', oplus: '⊕', otimes: '⊗',
+  to: '→', rightarrow: '→', Rightarrow: '⇒', leftarrow: '←',
+  Leftarrow: '⇐', leftrightarrow: '↔', Leftrightarrow: '⇔', mapsto: '↦',
+  ldots: '…', cdots: '⋯', dots: '…', vdots: '⋮', ddots: '⋱',
+  angle: '∠', perp: '⊥', parallel: '∥', degree: '°', prime: '′',
+  aleph: 'ℵ', hbar: 'ℏ', ell: 'ℓ', Re: 'ℜ', Im: 'ℑ',
+  lceil: '⌈', rceil: '⌉', lfloor: '⌊', rfloor: '⌋',
+  langle: '⟨', rangle: '⟩', vert: '|', Vert: '‖',
+};
+
+// 这些是函数名,数学排版里要立体(正体)而不是斜体
+const MATH_OP = ['log', 'ln', 'lg', 'exp', 'max', 'min', 'arg', 'gcd', 'lcm',
+  'mod', 'sin', 'cos', 'tan', 'det', 'dim', 'deg', 'lim', 'sup', 'inf',
+  'Pr', 'Theta', 'Omega'];
+// 只管间距、不出字的
+const MATH_SKIP = ['left', 'right', 'big', 'Big', 'bigg', 'Bigg', 'displaystyle',
+  'limits', 'nolimits', 'quad', 'qquad'];
+// 内容当普通文字排的
+const MATH_TEXT = ['text', 'mathrm', 'mathbf', 'mathit', 'mathsf', 'mathtt',
+  'operatorname', 'textbf', 'textit', 'boldsymbol'];
+
+/* 从 i 处读一个"组":`{...}`(括号配平)或者紧跟的一个字符。
+   返回 [内容, 下一个位置]。 */
+function mathGroup(tex, i) {
+  if (tex[i] !== '{') {
+    if (tex[i] === undefined) return ['', i];
+    // lpha^eta 这种:上标本身是个命令,整条读走
+    if (tex[i] === '\\') {
+      const m = /^\\([A-Za-z]+)/.exec(tex.slice(i));
+      if (m) return [m[0], i + m[0].length];
+    }
+    return [tex[i], i + 1];
+  }
+  let depth = 0;
+  for (let j = i; j < tex.length; j += 1) {
+    if (tex[j] === '{') depth += 1;
+    else if (tex[j] === '}') {
+      depth -= 1;
+      if (depth === 0) return [tex.slice(i + 1, j), j + 1];
+    }
+  }
+  return [tex.slice(i + 1), tex.length];     // 没配上就当读到末尾
+}
+
+/* 把一段 TeX 画进 parent。递归 —— 分式的分子本身可以是分式。 */
+function mathInto(tex, parent) {
+  let buf = '';
+  const flush = () => {
+    if (buf) parent.appendChild(document.createTextNode(buf));
+    buf = '';
+  };
+  let i = 0;
+  let guard = 0;
+  while (i < tex.length && guard++ < 4000) {
+    const c = tex[i];
+
+    if (c === '\\') {
+      const m = /^\\([A-Za-z]+|.)/.exec(tex.slice(i));
+      if (!m) { buf += c; i += 1; continue; }
+      const name = m[1];
+      i += m[0].length;
+      if (name === 'frac' || name === 'dfrac' || name === 'tfrac') {
+        const [num, i2] = mathGroup(tex, i);
+        const [den, i3] = mathGroup(tex, i2);
+        i = i3;
+        flush();
+        const f = el('span', 'md-frac');
+        const n = el('span', 'md-frac-n');
+        mathInto(num, n);
+        const d = el('span', 'md-frac-d');
+        mathInto(den, d);
+        f.appendChild(n);
+        f.appendChild(d);
+        parent.appendChild(f);
+        continue;
+      }
+      if (name === 'sqrt') {
+        const [inner, i2] = mathGroup(tex, i);
+        i = i2;
+        flush();
+        parent.appendChild(document.createTextNode('√'));
+        const r = el('span', 'md-sqrt');
+        mathInto(inner, r);
+        parent.appendChild(r);
+        continue;
+      }
+      if (MATH_TEXT.includes(name)) {
+        const [inner, i2] = mathGroup(tex, i);
+        i = i2;
+        flush();
+        parent.appendChild(el('span', 'md-math-up', inner));
+        continue;
+      }
+      if (MATH_OP.includes(name)) {
+        flush();
+        parent.appendChild(el('span', 'md-math-up', MATH_SYM[name] || name));
+        continue;
+      }
+      if (MATH_SKIP.includes(name)) {
+        if (name === 'quad' || name === 'qquad') buf += '  ';
+        continue;
+      }
+      if (MATH_SYM[name] !== undefined) { buf += MATH_SYM[name]; continue; }
+      if (name.length === 1) { buf += name; continue; }   // \{ \} \_ \%
+      // 不认识的命令原样留着 —— 猜错比看得出没支持更糟。
+      // **连大括号一起留** —— 只留命令名会变成 `\\foobarx`,
+      // 看着像一个词,反而不像"这儿有个没支持的命令"
+      buf += '\\' + name;
+      if (tex[i] === '{') {
+        const [inner, i2] = mathGroup(tex, i);
+        buf += '{' + inner + '}';
+        i = i2;
+      }
+      continue;
+    }
+
+    if (c === '^' || c === '_') {
+      const [inner, i2] = mathGroup(tex, i + 1);
+      i = i2;
+      flush();
+      const n = el(c === '^' ? 'sup' : 'sub');
+      mathInto(inner, n);
+      parent.appendChild(n);
+      continue;
+    }
+
+    if (c === '{' || c === '}') { i += 1; continue; }   // 纯分组括号不出字
+    buf += c;
+    i += 1;
+  }
+  flush();
+}
+
+/* 一段公式 -> 一个节点。display=true 是独占一行的那种($$…$$)。 */
+function mathNode(tex, display) {
+  const box = el(display ? 'div' : 'span',
+    'md-math' + (display ? ' md-math-block' : ''));
+  box.title = tex;                 // 认错了也能看到原文
+  mathInto(tex, box);
+  return box;
+}
+
+/* `$…$` 里到底是公式还是钱。**这一关不能省** —— 对话里「这次花了 $0.10」
+   很常见,把它当公式渲染出来是一坨乱码。
+   规矩:两头不能是空格、里面不能再有 $、而且得有个"像数学"的东西
+   (反斜杠命令、上下标、花括号、或者字母)。纯数字一律当钱。 */
+function looksMath(inner) {
+  if (!inner || /^\s|\s$/.test(inner) || inner.includes('$')) return false;
+  if (/^[\d.,]+$/.test(inner)) return false;
+  return /[\\^_{}]/.test(inner) || /[A-Za-z]/.test(inner);
+}
+
 function mdInline(text, parent) {
-  // 顺序有讲究:行内代码最先匹配,否则代码里的 * 会被当成强调标记
-  const RE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[[^\]\n]+\]\([^)\s]+\))|(\*[^*\n]+\*)/;
+  // 公式紧跟在行内代码后面 —— 不然 \$a * b\$ 里那个星号会先被当成强调标记
+  const RE = /(`[^`\n]+`)|(\$[^$\n]+\$)|(\\\([^)]*\\\))|(\*\*[^*\n]+\*\*)|(\[[^\]\n]+\]\([^)\s]+\))|(\*[^*\n]+\*)/;
   let rest = text;
   let guard = 0;
   while (rest && guard++ < 2000) {
@@ -162,6 +338,14 @@ function mdInline(text, parent) {
     const tok = m[0];
     if (tok.startsWith('`')) {
       parent.appendChild(el('code', 'md-code', tok.slice(1, -1)));
+    } else if (tok.startsWith('$') || tok.startsWith('\\(')) {
+      // 看着像钱就别当公式(「这次花了 $0.10」很常见),见 looksMath
+      const inner = tok.startsWith('$') ? tok.slice(1, -1) : tok.slice(2, -2);
+      if (tok.startsWith('$') && !looksMath(inner)) {
+        parent.appendChild(document.createTextNode(tok));
+      } else {
+        parent.appendChild(mathNode(inner, false));
+      }
     } else if (tok.startsWith('**')) {
       parent.appendChild(el('strong', null, tok.slice(2, -2)));
     } else if (tok.startsWith('[')) {
@@ -183,7 +367,7 @@ function mdInline(text, parent) {
   }
 }
 
-const MD_BLOCK_START = /^(#{1,6}\s|```|\s*[-*+]\s|\s*\d+\.\s)/;
+const MD_BLOCK_START = /^(#{1,6}\s|```|\s*[-*+]\s|\s*\d+\.|\s*(?:\$\$|\\\[))/;
 
 function renderMarkdown(raw, container) {
   container.textContent = '';
@@ -191,6 +375,15 @@ function renderMarkdown(raw, container) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
+
+    // 独占一行的公式。**必须排在段落之前** —— 不然整段会被当成普通
+    // 文字,一屏的 $$ 和反斜杠
+    const dm = line.match(/^\s*(?:\$\$|\\\[)\s*(.*?)\s*(?:\$\$|\\\])?\s*$/);
+    if (dm && dm[1]) {
+      container.appendChild(mathNode(dm[1], true));
+      i++;
+      continue;
+    }
 
     if (/^```/.test(line)) {                        // 围栏代码
       const buf = [];
@@ -561,7 +754,13 @@ function addMsg(role, text, ctx) {
 function addMsgIn(log, role, text, ctx) {
   const msg = el('div', `msg msg-${role}`);
   msg.appendChild(el('div', 'msg-role', role === 'user' ? '我' : role === 'error' ? '出错' : 'Claude'));
-  const body = el('div', 'msg-body', text || '');
+  // **Claude 那一侧要过一遍 markdown。** 流式那条气泡一直是渲染过的
+  // (flushChatBubble),但读回历史走的是这儿 —— 原来直接塞纯文本,于是
+  // 重开一段对话满屏都是星号和 ``` ,公式更是没法看。
+  // 自己说的话保持原样:那是他打的字,不该被解释成格式
+  const body = el('div', 'msg-body');
+  if (role === 'assistant') renderMarkdown(text || '', body);
+  else body.textContent = text || '';
   msg.appendChild(body);
   // 这一轮关联了什么,在气泡下面留一行 —— 回看历史时才知道当时在问哪个东西
   if (ctx && ctx.length) {
@@ -1165,7 +1364,10 @@ function wireCourseView() {
 
 const WK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const WK_HOUR_PX = 46;          // 一小时画多高
-const WK_KIND_CN = { lecture: '上课', office: 'OH', memo: '备忘', other: '' };
+const WK_KIND_CN = { lecture: '上课', office: 'OH', memo: '备忘',
+  mail: '邮件', other: '' };
+// 全天条一格里最多摆几条,多的折叠成 +N。摆太多会把表头顶起来
+const WK_ALLDAY_MAX = 3;
 
 function wkSunday(d) {
   const x = new Date(d);
@@ -1190,21 +1392,14 @@ function wkClock(min) {
   return `${p(Math.floor(min / 60) % 24)}:${p(min % 60)}`;
 }
 
+/* 日程从"左栏里的一个子视图"升成了顶层页,所以这两个函数现在就是切页。
+   加载和定时重画都在 setPage 里做,见那儿的注释。 */
 function openWeek() {
-  $('dashView').hidden = true;
-  $('courseView').hidden = true;
-  $('weekView').hidden = false;
-  if (!state.weekStart) state.weekStart = wkYmd(wkSunday(new Date()));
-  loadWeek();
-  // 「实时」就体现在这儿:那条红线和「进行中」的高亮每分钟自己往下走,
-  // 不用重新拉数据(条目本身是每周固定的)
-  if (!state.weekTick) state.weekTick = setInterval(wkTick, 30000);
+  setPage('week');
 }
 
 function closeWeek() {
-  $('weekView').hidden = true;
-  $('dashView').hidden = false;
-  if (state.weekTick) { clearInterval(state.weekTick); state.weekTick = 0; }
+  setPage('study');
 }
 
 function wkTick() {
@@ -1280,7 +1475,8 @@ function renderWeek() {
   if (!d) return;
 
   const items = (d.items || []).filter(
-    (it) => state.prefs.schedMemos !== false || !it.memo);
+    (it) => (state.prefs.schedMemos !== false || !it.memo)
+      && (state.prefs.schedMail !== false || !it.mail));
   const [lo, hi] = wkRange(items);
   const top = lo * 60;
   const total = (hi - lo) * 60;
@@ -1303,6 +1499,39 @@ function renderWeek() {
     head.appendChild(h);
   }
   grid.appendChild(head);
+
+  // ── 全天条。只在真有全天条目的时候才建节点 —— 空着一条横线在那儿是
+  // 白占地方。**不能把它们当成 00:00–23:59 的块塞进主体**:纵轴范围是按
+  // 最早/最晚条目算的,那样会把它撑成 0–24,两门真课挤成一条缝
+  const ad = (d.allday || []).filter(
+    (x) => state.prefs.schedMail !== false);
+  if (ad.length) {
+    const row = el('div', 'wk-allday');
+    row.appendChild(el('div', 'wk-allday-k', '全天'));
+    for (let i = 0; i < 7; i += 1) {
+      const day = new Date(start);
+      day.setDate(day.getDate() + i);
+      const cell = el('div', 'wk-allday-c');
+      if (wkYmd(day) === today) cell.classList.add('is-today');
+      const mine = ad.filter((x) => x.weekday === i);
+      mine.slice(0, WK_ALLDAY_MAX).forEach((it) => {
+        const b = el('button', 'wk-ad' + (it.mkind === 'due' ? ' is-due' : ''),
+          (it.mkind === 'due' ? '截止 · ' : '') + (it.title || ''));
+        b.type = 'button';
+        b.title = [it.title, it.note].filter(Boolean).join('\n');
+        b.addEventListener('click', () => openWkSheet(it));
+        cell.appendChild(b);
+      });
+      if (mine.length > WK_ALLDAY_MAX) {
+        const more = el('div', 'wk-ad is-more',
+          `+${mine.length - WK_ALLDAY_MAX}`);
+        more.title = mine.slice(WK_ALLDAY_MAX).map((x) => x.title).join('\n');
+        cell.appendChild(more);
+      }
+      row.appendChild(cell);
+    }
+    grid.appendChild(row);
+  }
 
   // ── 主体:左边时刻尺,右边七列
   const body = el('div', 'wk-body');
@@ -1356,14 +1585,17 @@ function renderWeek() {
   $('btnWeekFull').classList.toggle('is-on', !!state.prefs.schedFull);
 
   const nAuto = items.filter((x) => x.auto).length;
-  const nHand = items.filter((x) => !x.auto && !x.memo).length;
+  const nHand = items.filter((x) => !x.auto && !x.memo && !x.mail).length;
   const nMemo = items.filter((x) => x.memo).length;
+  const nMail = items.filter((x) => x.mail).length + ad.length;
   const bits = [`${nAuto} 条抽自课程页面`];
   if (nHand) bits.push(`${nHand} 条手加`);
   if (nMemo) bits.push(`${nMemo} 条备忘`);
+  if (nMail) bits.push(`${nMail} 条来自邮件`);
   $('weekSub').textContent = bits.join(' · ');
 
   renderWeekNotes(d);
+  renderWeekBadge();
   // 页脚只说有货那几门课解析于何时 —— 五门课全列出来会绕两行,而没抽出
   // 东西的那几门上面 quiet 那一行已经交代过了
   const parsed = (d.parsed || []).filter((x) => x.n);
@@ -1410,6 +1642,34 @@ function wkBlock(e, px, isToday, nowMin) {
 
 /* 模型看见了、但排不进格子的话。**这一段不能省** —— 空着的 office hour 列
    看不出是"老师没有"还是"没抓到",这里那句"TA office hour 还没公布"才说清。 */
+/* 顶层导航上那个角标:今天还剩几件事。
+
+   **只数"还没过去的"** —— 一整天的课都上完了还挂个 3 在那儿,那个数字就
+   只是噪音。全天的事只要是今天就算(它没有时刻,过不过去无从判断)。 */
+function renderWeekBadge() {
+  const b = $('weekBadge');
+  if (!b) return;
+  const d = state.week;
+  const today = wkYmd(new Date());
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  const wd = new Date().getDay();
+  let n = 0;
+  if (d) {
+    // 角标只在"本周"这一屏有意义:翻到下一周的时候格子里根本没有今天
+    const thisWeek = state.weekStart === wkYmd(wkSunday(new Date()));
+    if (thisWeek) {
+      n = (d.items || []).filter(
+        (x) => x.weekday === wd && !x.memo
+          && (state.prefs.schedMail !== false || !x.mail)
+          && wkMins(x.end) > nowMin).length
+        + (d.allday || []).filter(
+          (x) => x.date === today && state.prefs.schedMail !== false).length;
+    }
+  }
+  b.textContent = String(n);
+  b.hidden = n <= 0;
+}
+
 function renderWeekNotes(d) {
   const box = $('weekNotes');
   box.textContent = '';
@@ -1438,27 +1698,39 @@ function renderWeekEntry() {
   if (!box) return;
   const d = state.week;
   if (!d) { box.textContent = '还没读取'; return; }
-  const items = (d.items || []).filter((x) => !x.memo);
-  if (!items.length) {
+  // 备忘不算(那是另一列的事),但**邮件日程要算** —— 今天下午三点的面试
+  // 正是这一行该说的东西
+  const items = (d.items || []).filter(
+    (x) => !x.memo && (state.prefs.schedMail !== false || !x.mail));
+  const today = wkYmd(new Date());
+  const adToday = (d.allday || []).filter(
+    (x) => x.date === today && state.prefs.schedMail !== false);
+  if (!items.length && !adToday.length) {
     box.textContent = '还没解析过 —— 点进去抽一次';
     return;
   }
+  // 今天有全天的事(交表截止之类)就挂在后面一句 —— 它没有时刻,排不进
+  // "接下来",但漏掉它这行就在说谎
+  const tail = adToday.length
+    ? ` · 今天还有「${adToday[0].title}」${adToday.length > 1 ? ` 等 ${adToday.length} 件` : ''}`
+    : '';
+  const say = (t) => { box.textContent = t + tail; };
   const now = new Date();
   const wd = now.getDay();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const live = items.find(
     (x) => x.weekday === wd && wkMins(x.start) <= nowMin && nowMin < wkMins(x.end));
   if (live) {
-    box.textContent = `正在进行 · ${live.title} 到 ${live.end}`
-      + (live.place ? ` · ${live.place}` : '');
+    say(`正在进行 · ${live.title} 到 ${live.end}`
+      + (live.place ? ` · ${live.place}` : ''));
     return;
   }
   const next = items
     .filter((x) => x.weekday === wd && wkMins(x.start) > nowMin)
     .sort((a, b) => wkMins(a.start) - wkMins(b.start))[0];
   if (next) {
-    box.textContent = `今天 ${next.start} ${next.title}`
-      + (next.place ? ` · ${next.place}` : '');
+    say(`今天 ${next.start} ${next.title}`
+      + (next.place ? ` · ${next.place}` : ''));
     return;
   }
   // 今天没有了 —— 往后找最近的一天
@@ -1467,11 +1739,11 @@ function renderWeekEntry() {
     const list = items.filter((x) => x.weekday === day)
       .sort((a, b) => wkMins(a.start) - wkMins(b.start));
     if (list.length) {
-      box.textContent = `${k === 1 ? '明天' : WK_CN[day]} ${list[0].start} ${list[0].title}`;
+      say(`${k === 1 ? '明天' : WK_CN[day]} ${list[0].start} ${list[0].title}`);
       return;
     }
   }
-  box.textContent = `本周 ${items.length} 项`;
+  say(items.length ? `本周 ${items.length} 项` : '今天没有固定日程');
 }
 
 /* ── 改一条 / 加一条 ──
@@ -1481,21 +1753,31 @@ function renderWeekEntry() {
 function openWkSheet(it) {
   state.weekEdit = it || null;
   const mk = !it;
-  $('weekSheetTitle').textContent = mk ? '加一条' : '改这一条';
+  // 邮件来的日程只有"什么事、哪天、几点"这几样能改 —— 类型、课程、谁、
+  // 地点、链接对它没有意义,整行藏掉比留着几个空框好
+  const isMail = !!(it && it.mail);
+  ['wfRowKind', 'wfRowWho', 'wfRowPlace', 'wfRowUrl'].forEach((id) => {
+    if ($(id)) $(id).hidden = isMail;
+  });
+  $('btnWfMail').hidden = !(isMail && it.mid);
+  $('weekSheetTitle').textContent = mk ? '加一条'
+    : (isMail ? '这条来自邮件' : '改这一条');
   $('wfTitle').value = it ? (it.title || '') : '';
   $('wfKind').value = it ? (it.kind || 'other') : 'other';
   $('wfCourse').value = it ? (it.course || '') : '';
   $('wfWeekday').value = String(it ? it.weekday : new Date().getDay());
-  $('wfStart').value = it ? it.start : '09:00';
-  $('wfEnd').value = it ? it.end : '10:00';
+  $('wfStart').value = it ? (it.start || '') : '09:00';
+  $('wfEnd').value = it ? (it.end || '') : '10:00';
   $('wfWho').value = it ? (it.who || '') : '';
   $('wfPlace').value = it ? (it.place || '') : '';
   $('wfUrl').value = it ? (it.url || '') : '';
   $('wfNote').value = it ? (it.note || '') : '';
-  $('wfHint').textContent = it && it.auto
-    ? '这条是从课程页面里抽出来的。改了之后,重新解析不会把你的改动冲掉。'
-    : '';
-  $('btnWfRevert').hidden = !(it && it.auto && it.edited);
+  $('wfHint').textContent = isMail
+    ? '这条是从邮件里抽出来的。时间留空 = 全天,摆到顶上那条全天条里;删掉不会再回来。'
+    : (it && it.auto
+      ? '这条是从课程页面里抽出来的。改了之后,重新解析不会把你的改动冲掉。'
+      : '');
+  $('btnWfRevert').hidden = !(it && (it.auto || it.mail) && it.edited);
   $('btnWfDel').hidden = mk;
   $('weekSheet').hidden = false;
   $('wfTitle').focus();
@@ -1533,6 +1815,18 @@ function wkForm() {
     who: $('wfWho').value.trim(),
     place: $('wfPlace').value.trim(),
     url: $('wfUrl').value.trim(),
+    note: $('wfNote').value.trim(),
+  };
+}
+
+/* 邮件日程能改的就这几样。**不发 kind** —— 那个字段在邮件日程里是
+   meet/due/other,和表单里 lecture/office 那三个不是一回事,发过去会把
+   截止条目变成"上课"。 */
+function wkMailForm() {
+  return {
+    title: $('wfTitle').value.trim(),
+    start: $('wfStart').value,
+    end: $('wfEnd').value,
     note: $('wfNote').value.trim(),
   };
 }
@@ -1584,14 +1878,23 @@ function wireWeek() {
   });
   $('weekForm').addEventListener('submit', (e) => e.preventDefault());
   $('btnWfSave').addEventListener('click', () => {
-    const f = wkForm();
-    if (wkMins(f.end) <= wkMins(f.start)) {
+    const cur = state.weekEdit;
+    const isMail = !!(cur && cur.mail);
+    const f = isMail ? wkMailForm() : wkForm();
+    // 邮件日程:两个时刻都空是合法的,那就是"全天"
+    const blank = isMail && !f.start && !f.end;
+    if (!blank && wkMins(f.end) <= wkMins(f.start)) {
       $('wfHint').textContent = '结束时间要晚于开始时间';
       return;
     }
-    const cur = state.weekEdit;
     wkSend(cur ? Object.assign({ action: 'edit', id: cur.id }, f)
                : Object.assign({ action: 'add' }, f));
+  });
+  $('btnWfMail').addEventListener('click', () => {
+    const cur = state.weekEdit;
+    if (!(cur && cur.mid)) return;
+    closeWkSheet();
+    openMailById(cur.mid);
   });
   $('btnWfRevert').addEventListener('click', () => {
     if (state.weekEdit) wkSend({ action: 'revert', id: state.weekEdit.id });
@@ -1608,8 +1911,23 @@ function wireWeek() {
    所以课业简报在生成的时候你还能问邮件的事,互不打断。 */
 
 function setPage(page) {
-  state.page = page === 'mail' ? 'mail' : 'study';
+  state.page = ['mail', 'week'].includes(page) ? page : 'study';
   document.body.dataset.page = state.page;
+  // 日程页:#weekView 上那个 hidden 留着不动 —— 别处有好几处拿
+  // `!$('weekView').hidden` 当"现在看得见吗"用(定时重画、改了偏好要不要
+  // 重渲染),去掉它那些判断就全失效了
+  const onWeek = state.page === 'week';
+  $('weekView').hidden = !onWeek;
+  if (onWeek) {
+    if (!state.weekStart) state.weekStart = wkYmd(wkSunday(new Date()));
+    loadWeek();
+    // 「实时」就体现在这儿:红线和「进行中」的高亮每 30 秒自己往下走,
+    // 不用重新拉数据
+    if (!state.weekTick) state.weekTick = setInterval(wkTick, 30000);
+  } else if (state.weekTick) {
+    clearInterval(state.weekTick);
+    state.weekTick = 0;
+  }
   document.querySelectorAll('#pageSeg .seg-btn').forEach((b) => {
     b.classList.toggle('is-on', b.dataset.v === state.page);
   });
@@ -1799,8 +2117,20 @@ function mailCard(m, i) {
   if (!sum) line2.title = '这封还没过目,先显示主题';
   row.appendChild(line2);
 
-  // ③ 分组 + 级别 + 标签。分组排最前 —— 它比标签高一级
+  // ③ 分组 + 级别 + 标签 + 日程。分组排最前 —— 它比标签高一级
   const tagrow = el('div', 'mail-tagrow');
+  // 这封信里的事进了日程表。**点一下直接跳到那一周** —— 看见「已进日程」
+  // 第一个念头就是"进到哪天了",不给入口反而添堵
+  if (m.dated) {
+    const cal = el('button', 'dated-chip', '已进日程');
+    cal.type = 'button';
+    cal.title = '这封信里有带日期的事,已经画进日程表了 —— 点这里去看';
+    cal.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openWeek();
+    });
+    tagrow.appendChild(cal);
+  }
   if (m.person) {
     const p = el('span', 'person-chip', m.person);
     p.title = `这个发件人被你归进「${m.person}」—— 他的信不会被坏标签藏起来`;
@@ -2209,6 +2539,7 @@ function renderUpdate(info, job) {
   const key = relNew ? i.latest : (gitN ? `git:${gitN}` : '');
   const show = !!key && skipKey() !== key;
   bar.hidden = !show;
+  if (!show && $('updNotes')) $('updNotes').hidden = true;
   if (show) {
     txt.textContent = relNew
       ? `有新版本 v${i.latest}`
@@ -2225,8 +2556,10 @@ function renderUpdate(info, job) {
   if (go) go.hidden = !(relNew || gitN);
   // 「改了什么」只在有 Release 页可看的时候给 —— 源码版点开会落到
   // 上一个 Release 的页面,那是在说谎
+  // 「改了什么」两种都给:Release 有 notes,源码版有提交标题
   const what = $('updWhat');
-  if (what) what.hidden = !relNew || !i.page;
+  if (what) what.hidden = !(relNew ? (i.notes || (i.history || []).length)
+    : (i.git_subjects || []).length);
 }
 
 /* 「跳过这个版本」记在 prefs 里,重开还算数。源码版的提交数每次 fetch
@@ -2257,6 +2590,49 @@ function gotoWhere(where) {
   void bar.offsetWidth;
   bar.classList.add('is-flash');
   setTimeout(() => bar.classList.remove('is-flash'), 1600);
+}
+
+/* 把「你这个版本到最新版之间」每一版的说明画出来。
+
+   history 是后端拼好的(updater._notes_since),新的在前。老版本的 info
+   里没有这个字段 —— 那就退回只显示最新那一份。 */
+function renderUpdNotes() {
+  const box = $('updNotes');
+  const i = state.upd || {};
+  box.textContent = '';
+  const hist = (i.history || []).filter((h) => h && (h.notes || h.version));
+  // 源码版没有 Release notes,提交标题就是"改了什么"
+  if (!hist.length && (i.git_subjects || []).length) {
+    box.appendChild(el('div', 'md-p',
+      `源码有 ${i.git_behind} 个新提交,最近几条:`));
+    const ul = el('ul', 'md-ul');
+    i.git_subjects.forEach((t) => ul.appendChild(el('li', null, t)));
+    box.appendChild(ul);
+    return;
+  }
+  if (!hist.length && i.notes) {
+    hist.push({ version: i.latest || '', date: i.published || '', notes: i.notes });
+  }
+  if (!hist.length) {
+    box.appendChild(el('div', 'muted', '这一版没写更新说明。'));
+    return;
+  }
+  box.appendChild(el('div', 'md-p',
+    hist.length > 1 ? `检测到更新,${hist.length} 个版本的更新内容如下:`
+      : '检测到更新,更新内容如下:'));
+  hist.forEach((h) => {
+    box.appendChild(el('div', 'upd-notes-v',
+      `v${h.version}${h.date ? ' · ' + h.date : ''}`));
+    const body = el('div');
+    renderMarkdown(h.notes || '(没写说明)', body);
+    box.appendChild(body);
+  });
+  if (i.page) {
+    const a = el('button', 'link-btn', '在 GitHub 上看这个 Release');
+    a.type = 'button';
+    a.addEventListener('click', () => openExternal(i.page));
+    box.appendChild(a);
+  }
 }
 
 function setUpdState(t) {
@@ -2315,6 +2691,23 @@ async function applyUpdate() {
 
    占满左栏,右栏的对话不受影响:只是把 #paneMail 里列表那几块藏掉
    (靠 .is-one 这个类),不动 grid 布局。退出回列表,滚动位置也还原。 */
+
+/* 从日程表跳回原信。只有邮件 id —— 列表是分页的,那封可能不在当前这页,
+   所以直接按 id 问后端要一封。 */
+async function openMailById(mid) {
+  setPage('mail');
+  try {
+    const r = await apiGet('/api/mail/one', { id: mid });
+    if (r && r.message) {
+      openMailOne(r.message);
+      return;
+    }
+  } catch (e) {
+    showMailBanner('打不开那封信:' + ((e && e.message) || e));
+    return;
+  }
+  showMailBanner('那封信已经不在本地索引里了');
+}
 
 function openMailOne(m) {
   const pane = $('paneMail');
@@ -4153,7 +4546,7 @@ const PREF_FALLBACK = {
   skipVersion: '',
   focusCourses: '', prefsTab: 'general',
   mailFacts: [], mailTags: [], mailAiOn: true, mailModel: 'sonnet',
-  schedModel: 'sonnet', schedFull: false, schedMemos: true,
+  schedModel: 'sonnet', schedFull: false, schedMemos: true, schedMail: true,
   mailMarkRead: true,
   mailSort: 'date_desc',
 };
@@ -4240,6 +4633,7 @@ function syncPrefsUI() {
   setSwitch('swSync', p.autoSync !== false);
   $('selSchedModel').value = p.schedModel || 'sonnet';
   setSwitch('swSchedMemos', p.schedMemos !== false);
+  setSwitch('swSchedMail', p.schedMail !== false);
   if ($('schedPrefState')) {
     const sc = state.sched;
     $('schedPrefState').textContent = !sc ? ''
@@ -4759,6 +5153,11 @@ function wirePrefs() {
   toggle('swSchedMemos', 'schedMemos', () => {
     if (!$('weekView').hidden) renderWeek();
   });
+  // 画不画是纯显示问题,原地重画就行 —— 日程本身早抽好了
+  toggle('swSchedMail', 'schedMail', () => {
+    if (!$('weekView').hidden) renderWeek();
+    renderWeekEntry();
+  });
   $('btnSchedParse').addEventListener('click', async () => {
     $('schedPrefState').textContent = '解析中…';
     try {
@@ -4815,8 +5214,13 @@ function wirePrefs() {
   $('btnUpdGo').addEventListener('click', () => applyUpdate());
   $('updGo').addEventListener('click', () => applyUpdate());
   $('updWhat').addEventListener('click', () => {
-    const i = state.upd || {};
-    if (i.page) openExternal(i.page);
+    const box = $('updNotes');
+    if (!box) return;
+    // 就地展开。原来是直接开浏览器 —— 但"更新内容"这种东西就该在应用里
+    // 看得到,跳出去看还得自己找回来
+    if (!box.hidden) { box.hidden = true; return; }
+    renderUpdNotes();
+    box.hidden = false;
   });
   $('updLater').addEventListener('click', () => {
     // 「跳过这个版本」。**只跳过这一个版本** —— 下一个版本还会再来,
@@ -4827,6 +5231,7 @@ function wirePrefs() {
     if (i.newer && i.latest) savePrefs({ skipVersion: i.latest });
     else state.updDismissed = `git:${Number(i.git_behind || 0)}`;
     $('updBar').hidden = true;
+    $('updNotes').hidden = true;
   });
   toggle('swUpdateCheck', 'updateCheck');
   toggle('swUpdateToast', 'updateToast');

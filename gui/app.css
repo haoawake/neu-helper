@@ -66,6 +66,10 @@
   --accent-ink:     #1a5ba8;
   --serious-wash:   rgba(236, 131, 90, 0.16);
   --serious-ink:    #8f4415;
+  /* 第三组 wash/ink,给「邮件来的日程」那类块。和上面两组同一个标准挑的:
+     #1d7a1d 在白底上 5.45:1,压在 13% 的绿 wash 上还有 5.1:1 */
+  --good-wash:      rgba(12, 163, 12, 0.13);
+  --good-ink:       #1d7a1d;
 
   /* 状态色固定,不随主题变 */
   --good:     #0ca30c;
@@ -129,6 +133,8 @@
     --accent-ink:     #8fbdf5;
     --serious-wash:   rgba(236, 131, 90, 0.18);
     --serious-ink:    #f0a781;
+    --good-wash:      rgba(108, 209, 112, 0.16);
+    --good-ink:       #86d98a;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30), 0 2px 8px rgba(0, 0, 0, 0.22);
     --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.34), 0 8px 24px rgba(0, 0, 0, 0.30);
@@ -171,6 +177,8 @@
   --accent-ink:     #8fbdf5;
   --serious-wash:   rgba(236, 131, 90, 0.18);
   --serious-ink:    #f0a781;
+  --good-wash:      rgba(108, 209, 112, 0.16);
+  --good-ink:       #86d98a;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30), 0 2px 8px rgba(0, 0, 0, 0.22);
   --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.34), 0 8px 24px rgba(0, 0, 0, 0.30);
@@ -398,7 +406,7 @@ body[data-mode="chat"] .tb-drag { padding: 0 8px; gap: 6px; }
 
 /* 形变期间把内容整个淡掉。原生窗口是逐帧改尺寸的,每帧 WebView2 都要重排,
    不遮住的话那串中间布局全看在眼里。淡出比淡入快一点,收起来才利落。 */
-.titlebar, .layout, .layout-mail {
+.titlebar, .layout, .layout-mail, .layout-week {
   transition: opacity 130ms var(--ease), transform 130ms var(--ease);
 }
 body.is-morphing .titlebar { opacity: 0; }
@@ -1072,6 +1080,40 @@ a.md-link {
 }
 .msg-body strong, .brief-body strong { font-weight: 650; color: var(--text-primary); }
 
+/* ── 公式 ──
+   变量斜体、函数名立体,这是数学排版的基本规矩(sin 立体、x 斜体)。
+   **不用 KaTeX**,理由在 app.js 那段注释里:本地应用没 CDN,而把整个
+   KaTeX 塞进仓库就为了偶尔一个 Θ(n log n) 不值得。所以认的是一个子集,
+   字体和间距靠这几条 CSS 撑出"像公式"的样子。 */
+.md-math {
+  font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+  font-style: italic;
+  white-space: nowrap;
+  letter-spacing: .01em;
+}
+.md-math-block {
+  display: block;
+  margin: 8px 0;
+  text-align: center;
+  font-size: 15px;
+  white-space: normal;
+}
+/* 函数名、	ext{…} 里的东西:立体、不斜 */
+.md-math-up { font-style: normal; font-family: inherit; }
+.md-math sup, .md-math sub { font-size: .72em; line-height: 0; }
+
+/* 分式。inline-flex 的两行 + 一条横线 —— 比写成 a/b 好读得多 */
+.md-frac {
+  display: inline-flex; flex-direction: column;
+  vertical-align: -0.45em;
+  text-align: center;
+  margin: 0 2px;
+}
+.md-frac-n { border-bottom: 1px solid currentColor; padding: 0 4px 1px; }
+.md-frac-d { padding: 1px 4px 0; }
+/* 根号:√ 后面那段顶上加一条线,才知道根号管到哪儿 */
+.md-sqrt { border-top: 1px solid currentColor; padding: 0 2px; }
+
 /* ═══════════════════════ 作业详情 ═══════════════════════ */
 
 .sheet-backdrop {
@@ -1663,6 +1705,11 @@ body.no-anim .prefs-tab { animation: none; }
 /* 两个 layout 互斥:body[data-page] 决定显示哪一屏 */
 body[data-page="mail"] .layout:not(.layout-mail) { display: none; }
 body:not([data-page="mail"]) .layout-mail { display: none !important; }
+/* 日程是第三屏。**一整屏、不分左右栏** —— 这一页的用处是一眼看完整周,
+   左右分栏只会把七列压窄(它原来就在左栏里,窄得看不清) */
+body[data-page="week"] .layout:not(.layout-week) { display: none; }
+body:not([data-page="week"]) .layout-week { display: none !important; }
+.layout-week { grid-template-columns: minmax(0, 1fr); }
 /* 收成对话框的时候邮箱页也只留右栏 */
 body[data-mode="chat"] #paneMail { display: none; }
 body[data-mode="chat"] .layout-mail {
@@ -2171,7 +2218,7 @@ body.no-anim .mail-full { animation: none; }
 }
 
 /* ── 子页面切换:淡入 + 轻微横移,而不是"啪"地换一屏 ── */
-.layout, .layout-mail {
+.layout, .layout-mail, .layout-week {
   animation: page-in var(--dur-enter) var(--ease-decelerate) both;
 }
 @keyframes page-in {
@@ -2180,7 +2227,8 @@ body.no-anim .mail-full { animation: none; }
 }
 /* 形变期间别叠两套动画 */
 body.is-morphing .layout,
-body.is-morphing .layout-mail { animation: none; }
+body.is-morphing .layout-mail,
+body.is-morphing .layout-week { animation: none; }
 
 /* ── 课程单页进出 ── */
 #courseView { animation: view-in var(--dur-enter) var(--ease-decelerate) both; }
@@ -2270,6 +2318,26 @@ body.is-morphing .layout-mail { animation: none; }
   45% { box-shadow: 0 0 0 3px var(--accent-ink); }
 }
 body.no-anim .upd-bar.is-flash { animation: none; }
+
+/* 展开的更新说明。横幅本身是一行,说明另起一块 —— 三个版本的说明塞进
+   一行没法看 */
+.upd-notes {
+  margin: -4px 0 10px; padding: 9px 12px;
+  border-radius: 12px;
+  background: var(--wash);
+  border: 1px solid var(--field-edge);
+  font-size: 12px; line-height: 1.55;
+  max-height: 280px; overflow-y: auto;
+}
+.upd-notes .md-h { font-size: 12.5px; margin: 10px 0 4px; }
+.upd-notes .md-h:first-child { margin-top: 0; }
+.upd-notes-v {
+  display: inline-block;
+  padding: 0 6px; margin-bottom: 3px;
+  border-radius: 999px;
+  background: var(--accent-wash); color: var(--accent-ink);
+  font-size: 11px; font-weight: 650;
+}
 
 .upd-bar.is-working .upd-go,
 .upd-bar.is-working .upd-what,
@@ -2414,6 +2482,65 @@ body.no-anim .upd-bar.is-flash { animation: none; }
   color: var(--serious-ink);
 }
 .wk-ev.is-memo { cursor: default; border-left-style: dashed; }
+/* 邮件来的日程。第三组类别色 —— 但**颜色不是唯一通道**:块上自带「邮件」
+   字样,和上课、OH、备忘一样能靠文字分清 */
+/* 邮件卡片上那个「已进日程」。用的是日程那一类的颜色(--good-*),
+   所以两处一眼就能对上:卡片上标着它、日程表里那个块是同一个绿 */
+.dated-chip {
+  appearance: none; cursor: pointer; font: inherit;
+  flex: 0 0 auto;
+  padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--good);
+  background: var(--good-wash); color: var(--good-ink);
+  font-size: 10.5px; font-weight: 600;
+}
+.dated-chip::before { content: '🗓 '; }
+.dated-chip:hover { filter: brightness(1.06); }
+
+.wk-ev.is-mail {
+  background: var(--good-wash); border-left-color: var(--good);
+  color: var(--good-ink);
+}
+
+/* ── 全天条 ──
+   表头下面一行,七列和网格对齐。**全天的日程不能画成 00:00–23:59 的块**:
+   纵轴的范围是按最早/最晚条目算出来的,真那么画会把它撑成 0–24,两门真课
+   挤成一条缝。所以它们单独一行。一条都没有的时候整行不渲染(不是高度 0,
+   是压根不建节点)—— 空着一条横线在那儿是白占地方。 */
+.wk-allday {
+  display: grid;
+  grid-template-columns: 46px repeat(7, minmax(0, 1fr));
+  border-bottom: 1px solid var(--hairline);
+  background: var(--wash);
+}
+.wk-allday-k {
+  display: flex; align-items: center; justify-content: center;
+  border-right: 1px solid var(--hairline);
+  font-size: 10px; color: var(--text-muted);
+}
+.wk-allday-c {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 3px 3px;
+  border-right: 1px solid var(--hairline);
+  min-height: 22px;
+}
+.wk-allday-c:last-child { border-right: 0; }
+.wk-allday-c.is-today { background: var(--accent-wash); }
+.wk-ad {
+  display: block; width: 100%;
+  appearance: none; border: 0; text-align: left; cursor: pointer;
+  padding: 2px 5px; border-radius: 5px;
+  background: var(--good-wash); color: var(--good-ink);
+  border-left: 3px solid var(--good);
+  font: inherit; font-size: 10.5px; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wk-ad:hover { filter: brightness(1.06); }
+.wk-ad.is-due { border-left-color: var(--critical); }
+.wk-ad.is-more {
+  background: transparent; color: var(--text-muted);
+  border-left-color: transparent; cursor: default;
+}
 /* 此刻正在进行的那一块。实线描边 + 提亮,和「今天」那一列的底色区分开 */
 .wk-ev.is-live {
   box-shadow: 0 0 0 2px var(--accent), var(--shadow-sm);

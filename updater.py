@@ -91,25 +91,72 @@ def install_kind(here: Path) -> str:
 # ─────────────────────────── 查 ───────────────────────────
 
 
+# 一次拉多少个 Release。要的是"从你这个版本到最新版之间的全部更新说明",
+# 所以不能只问 releases/latest —— 落后三个版本的人该看到三份说明
+RELEASES_PER_PAGE = 30
+
+
+def _get_json(path: str):
+    """GET 一个 GitHub 接口。失败抛异常,调用方兜。"""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{ver.REPO}{path}", headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": f"NEUHelper/{ver.VERSION}",
+        })
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def _notes_since(releases: list, current: str) -> list[dict]:
+    """比 current 新的那些 Release 的说明,新的在前。
+
+    **为什么要全部而不只是最新那个。** 一个落后三个版本的人看到的"更新内容"
+    应该是这三个版本加起来改了什么 —— 只给最新那份,中间两版做了什么他永远
+    不知道,而那里面可能正有他一直在等的修复。
+    """
+    out = []
+    for r in releases:
+        if r.get("draft") or r.get("prerelease"):
+            continue
+        tag = str(r.get("tag_name") or "")
+        if not tag or not ver.is_newer(tag, current):
+            continue
+        out.append({
+            "version": tag.lstrip("vV"),
+            "date": (r.get("published_at") or "")[:10],
+            "notes": (r.get("body") or "").strip()[:2000],
+        })
+    out.sort(key=lambda x: ver.parse(x["version"]), reverse=True)
+    return out
+
+
 def check() -> dict:
     """问一下 GitHub 有没有新版本。
 
     只读公开的 Releases 接口,不带任何凭据 —— 但**这会把你的 IP 告诉
     GitHub**,所以设置里能关掉(prefs.updateCheck)。
+
+    拉的是 releases 列表(不是 releases/latest):除了"有没有新版本",
+    还要凑出**从你这个版本到最新版之间每一版的说明**,见 _notes_since。
     """
-    url = f"https://api.github.com/repos/{ver.REPO}/releases/latest"
-    req = urllib.request.Request(url, headers={
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": f"NEUHelper/{ver.VERSION}",
-    })
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            d = json.loads(r.read() or b"{}")
+        lst = _get_json(f"/releases?per_page={RELEASES_PER_PAGE}")
     except urllib.error.HTTPError as e:
         return {"ok": False, "error": f"GitHub 返回 {e.code}"}
     except Exception as exc:                       # noqa: BLE001
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    if not isinstance(lst, list):
+        return {"ok": False, "error": "GitHub 返回的不是列表"}
+    live = [r for r in lst if not r.get("draft") and not r.get("prerelease")]
+    if not live:
+        # 一个 Release 都没发过 —— 那就是"已经最新",不是错误
+        return {"ok": True, "current": ver.VERSION, "latest": "", "newer": False,
+                "notes": "", "history": [], "page": "", "asset": "", "size": 0,
+                "published": "", "checked": time.strftime("%Y-%m-%d %H:%M")}
+    live.sort(key=lambda r: ver.parse(str(r.get("tag_name") or "")), reverse=True)
+    d = live[0]
+    history = _notes_since(live, ver.VERSION)
 
     tag = str(d.get("tag_name") or "")
     want = _asset_name()
@@ -121,6 +168,9 @@ def check() -> dict:
         "latest": tag.lstrip("vV"),
         "newer": ver.is_newer(tag),
         "notes": (d.get("body") or "")[:4000],
+        # 你这个版本到最新版之间每一版的说明(新的在前)。横幅上那句
+        # 「更新内容如下」念的就是它
+        "history": history,
         "page": d.get("html_url") or "",
         "asset": (asset or {}).get("browser_download_url") or "",
         "size": (asset or {}).get("size") or 0,
