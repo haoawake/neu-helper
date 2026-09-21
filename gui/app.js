@@ -4172,9 +4172,18 @@ function handleWindowEvent(ev) {
    循环。实测一下都拖不动 —— 那个循环起手要 SetCapture,而捕获此刻在 Chromium
    的渲染子窗口手里(另一个进程,ReleaseCapture 也管不着),抢不到就立刻退出。
 
-   所以改成自己跟:pointerdown 记起点,pointermove 每帧发一条,后端自己
-   GetCursorPos 算位移。坐标一个都不传 —— screenX 是 CSS 像素、窗口要物理
-   像素,换算在多显示器 + 175% 缩放下很容易算错。 */
+   所以改成自己跟:pointerdown 记起点,后端自己 GetCursorPos 算位移。坐标一个
+   都不传 —— screenX 是 CSS 像素、窗口要物理像素,换算在多显示器 + 175% 缩放
+   下很容易算错。
+
+   **中间那一段现在由后端自己转。** 原来是 pointermove 里用 rAF 合并到
+   ~60/s、每帧发一条 POST。那条路会一顿一顿地追手:werkzeug 的开发服务器是
+   HTTP/1.0,每个响应都 Connection: close,于是每帧都要新建一条 loopback TCP
+   连接 —— 而这台机器上新建连接的 p90 是 **509ms**(建好的连接上跑一个来回
+   只要 0.047ms)。实测 2 秒里 60 次请求只有 27 次跟得上。
+   所以 drag/start 会回一个 follow:后端自己跟的话,前端整个拖动过程只发两条
+   请求。macOS 那边 AppKit 不是线程安全的,后台线程挪窗口要崩,所以那边
+   follow 是 false,仍然走每帧一条的老路。 */
 
 function wireDragRegions() {
   document.querySelectorAll('.drag-region').forEach((node) => {
@@ -4183,6 +4192,9 @@ function wireDragRegions() {
     let sx = 0;
     let sy = 0;
     let ticking = false;
+    // 后端自己跟吗。null = start 还没回话 —— 那段时间**什么都不发**:
+    // Windows 上后端已经在跟了,再发是白撞那条慢路;macOS 上顶多晚一帧
+    let follow = null;
 
     node.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
@@ -4200,9 +4212,14 @@ function wireDragRegions() {
       if (!dragging && Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) <= 3) return;
       if (!dragging) {
         dragging = true;
-        apiPost('/api/window/drag/start').catch(() => {});
+        follow = null;
+        apiPost('/api/window/drag/start')
+          .then((r) => { follow = !!(r && r.follow); })
+          .catch(() => { follow = false; });
         return;
       }
+      // 后端自己跟着光标走(或者还不知道)—— 一条请求都不用再发
+      if (follow !== false) return;
       // 每帧最多一条请求,鼠标再快也不会把本地服务打满
       if (ticking) return;
       ticking = true;
@@ -4217,6 +4234,7 @@ function wireDragRegions() {
       armed = false;
       if (dragging) apiPost('/api/window/drag/end').catch(() => {});
       dragging = false;
+      follow = null;
       try { node.releasePointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
     };
     node.addEventListener('pointerup', stop);

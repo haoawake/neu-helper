@@ -568,6 +568,13 @@ def animate_to(handle: int, logical_w: int, logical_h: int,
 # 索性就完全不碰它。
 
 
+# **macOS 这边不自己跟。** Windows 那边 drag_start 会起一条线程按 120Hz
+# 挪窗口(躲开"每帧一条 HTTP 请求"那条慢路,理由见 native_win32 里的注释),
+# 但 AppKit 不是线程安全的 —— 在后台线程里动窗口是要崩的。所以这里仍然靠
+# 前端每帧调 drag_move,前端看 DRAG_FOLLOWS 决定走哪条路。
+DRAG_FOLLOWS = False
+
+
 def drag_start(handle: int) -> bool:
     global _drag
     left, top, _, _ = get_rect(handle)

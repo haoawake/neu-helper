@@ -604,13 +604,47 @@ def close(hwnd: int) -> None:
 
 # ─────────────────────── 拖窗口 ───────────────────────
 #
-# 前端在 pointerdown 时调 drag_start,pointermove 时调 drag_move(一次一条,
-# 用 rAF 合并到 ~60/s),松手调 drag_end。位移由后端自己 GetCursorPos 算,
-# 前端一个坐标都不用传 —— 省掉 CSS 像素 / 物理像素的换算,也就没有多显示器
-# 和 175% 缩放下算错的可能。
+# 前端在 pointerdown 时调 drag_start,松手调 drag_end。位移由后端自己
+# GetCursorPos 算,前端一个坐标都不用传 —— 省掉 CSS 像素 / 物理像素的换算,
+# 也就没有多显示器和 175% 缩放下算错的可能。
+#
+# **中间那一段是后端自己转的,不是前端每帧发请求。** 原来是 pointermove 里
+# 用 rAF 合并到 ~60/s、每帧一条 POST /api/window/drag/move。那条路在这台机器
+# 上会一顿一顿地追手,原因量出来了:
+#
+#   直接调 handler(不走网络)          中位 0.28ms
+#   已经建好的 socket 上跑一个来回      中位 0.047ms
+#   **新建一条 loopback TCP 连接**      中位 0.49ms,**p90 509ms,最慢 540ms**
+#
+# 而 werkzeug 的开发服务器是 HTTP/1.0、每个响应都带 Connection: close ——
+# 于是**每帧都要新建一条连接**,每帧都在赌那个 500ms 的停顿。实测 2 秒里
+# 60 次请求只有 27 次跟得上,25% 超过 33ms(掉两帧以上)。
+#
+# 所以改成:drag_start 起一条跟随线程,自己按 ~120Hz 读光标挪窗口;
+# 拖动全程只有两条请求(start / end)。这条路上一个 TCP 连接都不用新建。
+#
+# 那个"新建连接很慢"本身不是这个项目的毛病(loopback 上钩了东西的机器都会
+# 这样),但既然拖窗是唯一每帧发请求的地方,躲开它比指望机器变好靠谱。
+
+# 拖拽由后端自己跟(见下面的 _follow)。前端据此**不再每帧发请求** ——
+# 这个标志由 /api/window/drag/start 回给前端
+DRAG_FOLLOWS = True
+
+VK_LBUTTON = 0x01
+# 跟随的步长。120Hz 比屏幕刷新率高一截 —— 宁可多算几次,也不要在 60Hz 的
+# 屏幕上正好错开一帧
+_FOLLOW_STEP = 1 / 120
+# 保险丝:松手的消息没收到、drag_end 也没来的话,最多跟这么久
+_FOLLOW_MAX = 60.0
 
 _drag_lock = threading.Lock()
 _drag: dict | None = None
+_follow_on = False
+
+# 返回值是 SHORT。不声明的话 ctypes 按 int 解释,最高位那个"正按着"的标志
+# 会被当成符号位,判断就永远是假
+user32.GetAsyncKeyState.restype = ctypes.c_short
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
 
 
 def drag_start(hwnd: int) -> bool:
@@ -620,6 +654,13 @@ def drag_start(hwnd: int) -> bool:
     left, top, _, _ = get_rect(hwnd)
     with _drag_lock:
         _drag = {"px": pt.x, "py": pt.y, "wx": left, "wy": top, "hwnd": hwnd}
+        # 一次拖动只要一条跟随线程。重复调 drag_start(前端重试、或者松手的
+        # 消息丢了紧接着又按下)不该越攒越多
+        start = not _follow_on
+        if start:
+            globals()["_follow_on"] = True
+    if start:
+        threading.Thread(target=_follow, daemon=True, name="win-drag").start()
     return True
 
 
@@ -637,6 +678,33 @@ def drag_move() -> bool:
         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
     )
     return True
+
+
+def _follow() -> None:
+    """跟着光标挪窗口,直到松手 / drag_end / 保险丝。
+
+    **松手要自己发现。** pointerup 有可能落在别的窗口上(拖得快的时候指针
+    会跑到窗口外面),那种情况下前端的 drag_end 根本不会来 —— 光等它的话
+    窗口会一直黏着鼠标。所以这里直接问系统左键还按着没有。
+    """
+    global _follow_on
+    t0 = time.time()
+    try:
+        while True:
+            with _drag_lock:
+                if _drag is None:
+                    return
+            if not (user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000):
+                drag_end()
+                return
+            if time.time() - t0 > _FOLLOW_MAX:
+                drag_end()
+                return
+            drag_move()
+            time.sleep(_FOLLOW_STEP)
+    finally:
+        with _drag_lock:
+            _follow_on = False
 
 
 def drag_end() -> None:

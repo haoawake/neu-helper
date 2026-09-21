@@ -2386,10 +2386,18 @@ def api_window_close():
 
 @app.post("/api/window/drag/start")
 def api_drag_start():
+    """开始拖窗。
+
+    `follow` 告诉前端"后端自己会跟"——那种情况下前端**不要**每帧再发
+    drag/move:那条路每帧要新建一条 loopback TCP 连接,而这台机器上新建连接
+    的 p90 是 500ms(werkzeug 是 HTTP/1.0,每个响应都 Connection: close),
+    窗口会一顿一顿地追手。理由和实测数据在 native_win32 的拖窗那一节。
+    """
     h = _hwnd()
     if h:
         native_window.drag_start(h)
-    return jsonify({"ok": bool(h)})
+    return jsonify({"ok": bool(h),
+                    "follow": bool(getattr(native_window, "DRAG_FOLLOWS", False))})
 
 
 @app.post("/api/window/drag/move")
