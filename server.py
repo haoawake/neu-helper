@@ -31,6 +31,7 @@ from pathlib import Path
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
 from canvas_api import (
+    SETUP_SCRIPT,
     CanvasClient,
     CanvasConfigError,
     days_left,
@@ -1932,6 +1933,10 @@ def api_update_get():
     GitHub 是没必要的,也容易撞限流。"""
     return jsonify({"version": appver.VERSION,
                     "kind": updater.install_kind(HERE),
+                    # 界面上凡是要念脚本名的地方都得看它 —— 装机脚本
+                    # Windows 是 install.ps1、macOS 是 install.sh
+                    "os": platform_id.NAME,
+                    "setup_script": SETUP_SCRIPT,
                     "info": backend.update_info,
                     "job": backend.updater.snapshot()})
 

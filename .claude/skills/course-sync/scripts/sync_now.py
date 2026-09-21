@@ -52,7 +52,8 @@ def _reexec_if_needed() -> None:
     if not py or os.environ.get("SYNCNOW_REEXEC"):
         raise SystemExit(
             f"这个 python 缺 {chr(12289).join(missing)},也找不到项目记录的解释器。"
-            "跑一次 install.ps1,或者手动指定装了这些库的 python。")
+            "跑一次装机脚本(Windows 上是 install.ps1,macOS 上是 install.sh),"
+            "或者手动指定装了这些库的 python。")
     env = dict(os.environ, SYNCNOW_REEXEC="1", PYTHONUTF8="1",
                PYTHONIOENCODING="utf-8")
     r = subprocess.run([str(py), os.path.abspath(__file__)] + sys.argv[1:], env=env)

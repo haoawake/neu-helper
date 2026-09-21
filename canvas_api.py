@@ -13,6 +13,7 @@ import html
 import json
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -20,6 +21,9 @@ import requests
 
 DEFAULT_BASE_URL = "https://northeastern.instructure.com"
 CONFIG_PATH = Path(os.path.expanduser("~")) / ".canvas-helper" / "config.json"
+# 装机脚本叫什么,按平台。**只用 sys.platform,不 import platform_id** ——
+# canvas_api 要能被 canvas_mcp 单独拿走用(那边除 requests 外零依赖)
+SETUP_SCRIPT = "install.ps1" if sys.platform == "win32" else "install.sh"
 
 
 class CanvasConfigError(RuntimeError):
@@ -41,9 +45,11 @@ def load_config() -> tuple[str, str]:
             raise CanvasConfigError(f"无法读取 {CONFIG_PATH}: {exc}") from exc
 
     if not token:
+        # 脚本名分平台 —— **不能写死 install.ps1**。Mac 用户照着它去找一个
+        # 不存在的 PowerShell 脚本,只会以为是自己装错了
         raise CanvasConfigError(
             "找不到 Canvas token。请设置环境变量 CANVAS_API_TOKEN,"
-            f"或运行 install.ps1 写入 {CONFIG_PATH}"
+            f"或运行 {SETUP_SCRIPT} 写入 {CONFIG_PATH}"
         )
     return (base or DEFAULT_BASE_URL).rstrip("/"), token
 

@@ -471,7 +471,9 @@ function render(d) {
     $('hero').hidden = true;
     showBanner(
       d.error === 'config'
-        ? '找不到或读不到 Canvas token,跑一次 install.ps1 重新写入。'
+        // 脚本名分平台 —— 写死 install.ps1 的话,Mac 用户会去找一个
+        // 不存在的 PowerShell 脚本(后端在 /api/update 里给了正确的那个)
+        ? `找不到或读不到 Canvas token,跑一次 ${state.setupScript || 'install 脚本'} 重新写入。`
         : d.message,
       d.error === 'config' ? '配置问题' : 'Canvas 连不上'
     );
@@ -2649,6 +2651,8 @@ function setUpdState(t) {
 async function loadUpdate() {
   try {
     const d = await apiGet('/api/update');
+    // 装机脚本叫什么(分平台)—— 报错文案里要念它
+    if (d.setup_script) state.setupScript = d.setup_script;
     state.updKind = d.kind;
     renderUpdate(d.info || {}, d.job || {});
     if (!(d.info || {}).latest) setUpdState(`当前 v${d.version}`);
