@@ -2508,8 +2508,13 @@ async function fixSetup() {
    而"有新版本"应该一直挂着直到你处理它。 */
 
 function renderUpdate(info, job) {
-  state.upd = info || state.upd || {};
-  state.updJob = job || state.updJob || {};
+  // **空对象不许覆盖已经拿到的那份。** `{}` 在 JS 里是真值,原来写成
+  // `info || state.upd` 就会被它冲掉 —— 而 push_update 在第一次成功检查
+  // 之前送的正是 `{}`(backend.update_info 的初值),于是版本号那一行变空白
+  if (info && Object.keys(info).length) state.upd = info;
+  else if (!state.upd) state.upd = {};
+  if (job && Object.keys(job).length) state.updJob = job;
+  else if (!state.updJob) state.updJob = {};
   const i = state.upd;
   const j = state.updJob;
   const bar = $('updBar');
@@ -2543,25 +2548,44 @@ function renderUpdate(info, job) {
   // 「有更新」有两种。**源码版的更新不经过 Release** —— 代码一推上 main
   // 就能快进拿到,所以那种情况报的是提交数,不是版本号。
   const gitN = Number(i.git_behind || 0);
-  const relNew = !!(i.newer && i.latest);
-  const key = relNew ? i.latest : (gitN ? `git:${gitN}` : '');
+  // 源码版特有:代码已经是新的了,只是跑着的进程还是旧的(见后端 stale_process)
+  const stale = !!i.stale_process;
+  const relNew = !!(i.newer && i.latest) && !stale;
+  const key = stale ? `stale:${i.latest}`
+    : relNew ? i.latest : (gitN ? `git:${gitN}` : '');
   const show = !!key && skipKey() !== key;
   bar.hidden = !show;
   if (!show && $('updNotes')) $('updNotes').hidden = true;
   if (show) {
-    txt.textContent = relNew
-      ? `有新版本 v${i.latest}`
-        + (i.published ? `(${i.published})` : '')
-        + ` —— 你现在是 v${i.current}`
-      : `源码有 ${gitN} 个新提交 —— 点更新就快进`;
+    txt.textContent = stale
+      ? `代码已经更新到 v${i.latest} —— 你这个窗口还跑着 v${i.current},重启一下生效`
+      : relNew
+        ? `有新版本 v${i.latest}`
+          + (i.published ? `(${i.published})` : '')
+          + ` —— 你现在是 v${i.current}`
+        : `源码有 ${gitN} 个新提交 —— 点更新就快进`;
     // 源码版没有 Release notes 可看,提交标题就是"改了什么"
     bar.title = relNew ? '' : (i.git_subjects || []).join('\n');
   }
-  setUpdState(relNew ? `有新版本 v${i.latest}`
-    : gitN ? `源码落后 ${gitN} 个提交`
-      : (i.latest ? `已经是最新的(v${i.current})` : ''));
-  const go = $('btnUpdGo');
-  if (go) go.hidden = !(relNew || gitN);
+  // **当前版本任何时候都要看得见。** 原来只在"已经是最新"那一支里念,
+  // 有更新的时候反而只说新版本号 —— 而那正是你最想知道"我现在是多少"的时候
+  const cur = i.current || state.updVersion || '';
+  const head = cur ? `当前 v${cur}` : '';
+  setUpdState(
+    stale ? `${head} · 代码已是 v${i.latest},重启生效`
+      : relNew ? `${head} · 有新版本 v${i.latest}`
+        : gitN ? `${head} · 源码落后 ${gitN} 个提交`
+          : (i.latest ? `已经是最新的(v${cur || i.latest})` : head));
+  // 「更新」两处也要一起切:横幅上那个原来从不隐藏,于是 stale 状态下
+  // 会和「重启生效」并排站着 —— 而那时候点它是无事可做的
+  ['updGo', 'btnUpdGo'].forEach((id) => {
+    if ($(id)) $(id).hidden = !(relNew || gitN) || stale;
+  });
+  // 代码已经换新、只是进程旧了 —— 该做的是重启,不是更新。
+  // 两处按钮都要切:横幅上那个和设置面板里那个
+  ['updRestart', 'btnUpdRestart'].forEach((id) => {
+    if ($(id)) $(id).hidden = !stale;
+  });
   // 「改了什么」只在有 Release 页可看的时候给 —— 源码版点开会落到
   // 上一个 Release 的页面,那是在说谎
   // 「改了什么」两种都给:Release 有 notes,源码版有提交标题
@@ -2653,9 +2677,12 @@ async function loadUpdate() {
     const d = await apiGet('/api/update');
     // 装机脚本叫什么(分平台)—— 报错文案里要念它
     if (d.setup_script) state.setupScript = d.setup_script;
+    // 后端每次都报当前版本 —— 存下来,info 里没有 current 时用它兜底
+    if (d.version) state.updVersion = d.version;
     state.updKind = d.kind;
     renderUpdate(d.info || {}, d.job || {});
     if (!(d.info || {}).latest) setUpdState(`当前 v${d.version}`);
+
   } catch (e) { /* 查不到就算了,不是错误 */ }
 }
 
@@ -2674,6 +2701,19 @@ async function checkUpdate() {
     }
   } catch (e) {
     setUpdState('查不到:' + ((e && e.message) || e));
+  }
+}
+
+/* 重启应用。给"代码已经换新、但这个窗口还跑着旧的"那种情况用 ——
+   那时候点「更新」是无事可做的(git 已经追平),真正要做的就是重起一份。 */
+async function restartApp() {
+  setUpdState('正在重启…');
+  try {
+    const r = await apiPost('/api/update/restart', {});
+    if (r && r.ok === false) setUpdState(r.error || '重启没成功');
+  } catch (e) {
+    // 后端会在回完这条之后立刻退出,所以连接被掐断是**正常**的
+    setUpdState('正在重启…');
   }
 }
 
@@ -5275,6 +5315,10 @@ function wirePrefs() {
   $('btnUpdCheck').addEventListener('click', () => checkUpdate());
   $('btnUpdGo').addEventListener('click', () => applyUpdate());
   $('updGo').addEventListener('click', () => applyUpdate());
+  // 两处「重启生效」是同一件事:横幅上一个、设置面板里一个
+  ['updRestart', 'btnUpdRestart'].forEach((id) => {
+    if ($(id)) $(id).addEventListener('click', () => restartApp());
+  });
   $('updWhat').addEventListener('click', () => {
     const box = $('updNotes');
     if (!box) return;

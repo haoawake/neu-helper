@@ -82,6 +82,9 @@
     <div id="updBar" class="upd-bar" hidden>
       <span id="updText" class="upd-text"></span>
       <button type="button" class="upd-go" id="updGo">更新</button>
+      <!-- 代码已经换新、只是这个窗口还跑着旧的 —— 那时候"更新"无事可做,
+           该做的是重启(源码版特有,见后端的 stale_process) -->
+      <button type="button" class="upd-go" id="updRestart" hidden>重启生效</button>
       <button type="button" class="upd-what" id="updWhat">改了什么</button>
       <button type="button" class="upd-x" id="updLater" title="这次先不提">✕</button>
     </div>
@@ -622,6 +625,8 @@
           <div class="pref-row pref-row-btns">
             <button class="btn btn-quiet" id="btnUpdCheck">现在检查</button>
             <button class="btn btn-quiet" id="btnUpdGo" hidden>下载并更新</button>
+            <button class="btn btn-quiet" id="btnUpdRestart" hidden
+                    title="代码已经是新的了,只是这个窗口还跑着旧的">重启生效</button>
             <span class="muted" id="updState"></span>
           </div>
         </section>

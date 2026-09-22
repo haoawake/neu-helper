@@ -881,6 +881,14 @@ class Backend:
                 info.update({"git_behind": g["behind"],
                              "git_upstream": g.get("upstream") or "",
                              "git_subjects": g.get("subjects") or []})
+            elif info.get("newer"):
+                # **源码版特有的状态:代码已经是新的了,只是进程还是旧的。**
+                # "有更新吗"问的是 GitHub Release 和内存里的 VERSION,
+                # "更新"做的是 git 快进 —— 工作区已经追平的时候这两件事
+                # 会互相打脸:横幅说"有新版本",点下去 git 说"已经是最新的
+                # 代码了",然后横幅就没了。用户看到的就是自相矛盾。
+                # 这种情况要做的不是更新,是**重启**
+                info["stale_process"] = True
         if info.get("ok"):
             self.update_info = info
             self.push_update(info, self.updater.snapshot())
@@ -1962,6 +1970,20 @@ def api_update_check():
     return jsonify({"ok": True, "info": backend.update_info,
                     "version": appver.VERSION,
                     "kind": updater.install_kind(HERE)})
+
+
+@app.post("/api/update/restart")
+def api_update_restart():
+    """重启应用。
+
+    给"代码已经换新、但跑着的进程还是旧的"那种情况用(源码版特有,
+    见 check_update 里的 stale_process)。那时候 git 快进无事可做,
+    真正要做的就是重起一份。
+    """
+    if not updater.restart(HERE):
+        return jsonify({"ok": False, "error": "找不到 app.py,重启不了"})
+    threading.Timer(0.8, lambda: os._exit(0)).start()
+    return jsonify({"ok": True})
 
 
 @app.post("/api/update/apply")

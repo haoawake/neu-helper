@@ -179,6 +179,21 @@ def check() -> dict:
     }
 
 
+def restart(here: Path) -> bool:
+    """把自己重起一份。
+
+    源码版有个别处没有的状态:**代码已经换成新的了,但跑着的这个进程还是
+    旧的**(git pull 过、或者像开发时那样直接改了工作区)。那时候"更新"
+    无事可做 —— 真正要做的是重启。所以这一步单独给出来。
+    """
+    entry = here / "app.py"
+    if not entry.exists():
+        return False
+    subprocess.Popen([sys.executable, str(entry), "--after-update"],
+                     cwd=str(here), close_fds=True, creationflags=_NO_WINDOW)
+    return True
+
+
 def check_git(here: Path) -> dict:
     """源码版:除了 Release,再看一眼 origin 上有没有新提交。
 
