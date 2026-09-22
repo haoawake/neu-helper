@@ -2287,7 +2287,13 @@ function renderSchedState(st) {
   } else if (st && (st.errors || []).length) {
     box.textContent = '解析出错:' + st.errors.join(' / ');
   } else {
-    box.textContent = '';
+    // **跑完了要说一句。** 原来这儿是直接清空 —— 于是"源文没变所以跳过了"
+    // 和"真的重抽了一遍"长得一模一样,都是点完什么都不动,看着像按钮坏了
+    const bits = [];
+    if (st && st.restored) bits.push(`放回了 ${st.restored} 条你删掉的`);
+    if (st && st.skipped) bits.push(`${st.skipped} 门课源文没变,沿用上次的`);
+    box.textContent = st && st.last && bits.length
+      ? bits.join(' · ') : '';
     // 刚跑完:把结果读回来
     if (st && st.last && !$('weekView').hidden) loadWeek();
   }
@@ -2311,7 +2317,9 @@ function wireWeek() {
   $('btnWeekParse').addEventListener('click', async () => {
     $('weekState').textContent = '解析中…';
     try {
-      const r = await apiPost('/api/schedule/parse', {});
+      // manual:这是人点的,不是每小时那次自动保鲜 —— 后端据此把删掉的
+      // 条目放回来(自动那次不会,见 server.parse_schedule)
+      const r = await apiPost('/api/schedule/parse', { manual: true });
       if (r && r.state) renderSchedState(r.state);
     } catch (e) {
       $('weekState').textContent = (e && e.message) || String(e);
@@ -5729,7 +5737,7 @@ function wirePrefs() {
   $('btnSchedParse').addEventListener('click', async () => {
     $('schedPrefState').textContent = '解析中…';
     try {
-      const r = await apiPost('/api/schedule/parse', {});
+      const r = await apiPost('/api/schedule/parse', { manual: true });
       if (r && r.state) renderSchedState(r.state);
     } catch (e) {
       $('schedPrefState').textContent = (e && e.message) || String(e);

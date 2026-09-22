@@ -238,7 +238,10 @@ class Backend:
         # 抽要跑模型,所以走后台线程 + 一份存档,界面渲染只读存档。
         self.schedule = tt.ScheduleStore(HERE / "data" / "schedule.json")
         self.sched_state = {"running": False, "done": 0, "total": 0,
-                            "course": "", "last": None, "errors": []}
+                            "course": "", "last": None, "errors": [],
+                            # 这一轮放回来几条被删的、几门课因为源文没变跳过了。
+                            # 手动点「重新解析」却什么都没发生时,得说得出原因
+                            "restored": 0, "skipped": 0}
         self._sched_lock = threading.Lock()
 
         # 课件同步:把 Canvas 上的文件分门别类下到本地,增量更新
@@ -1370,15 +1373,20 @@ class Backend:
                           for c in courses]
         return out
 
-    def parse_schedule(self, force: bool = False) -> bool:
-        """后台把每门课的正文送去解析。已经在跑就不重复起。"""
+    def parse_schedule(self, force: bool = False, manual: bool = False) -> bool:
+        """后台把每门课的正文送去解析。已经在跑就不重复起。
+
+        `manual` = 用户自己点的「重新解析」,和每小时那次自动保鲜区别对待:
+        手动那次会把删掉的条目放回来(见 _parse_schedule)。
+        """
         with self._sched_lock:
             if self.sched_state["running"]:
                 return False
             self.sched_state.update({"running": True, "done": 0, "total": 0,
-                                     "course": "", "errors": []})
+                                     "course": "", "errors": [],
+                                     "restored": 0, "skipped": 0})
         self.push_schedule()
-        threading.Thread(target=self._parse_schedule, args=(force,),
+        threading.Thread(target=self._parse_schedule, args=(force, manual),
                          daemon=True).start()
         return True
 
@@ -1406,8 +1414,9 @@ class Backend:
 
         threading.Thread(target=loop, daemon=True, name="sched-watch").start()
 
-    def _parse_schedule(self, force: bool) -> None:
+    def _parse_schedule(self, force: bool, manual: bool = False) -> None:
         errors: list[str] = []
+        restored = skipped = 0
         try:
             c = self.client()
             courses = self.sync_courses()
@@ -1429,6 +1438,13 @@ class Backend:
                 mine = c.my_sections()
             except Exception:
                 mine = {}
+            # **手动点「重新解析」= 真的重建一次。** 删掉的条目在这儿放回来:
+            # 按钮上写的是"重新解析",人点它就是想把课表重新拿回来,结果
+            # 一条 hidden 在底下压着,抽出来的东西照样画不进格子 —— 从他那头
+            # 看就是"点了没反应"。手改(改名、挪时间)不动,那些才是该留的。
+            # 每小时那次自动保鲜**不**走这条路:背着人把删掉的请回来更糟。
+            if manual:
+                restored = self.schedule.unhide(c2["id"] for c2 in courses)
             model = read_prefs().get("schedModel") or "sonnet"
             self.sched_state["total"] = len(courses)
             self.push_schedule()
@@ -1446,6 +1462,7 @@ class Backend:
                     if len(src["text"]) < 300:
                         continue
                     if not force and src["fp"] == self.schedule.fingerprint(course["id"]):
+                        skipped += 1
                         continue      # 源文没变,上次抽的还算数
                     got, cost = tt.run_one(HERE, course, src["text"], model)
                     self.schedule.put_course(course["id"], src["fp"], got, model, cost)
@@ -1459,6 +1476,7 @@ class Backend:
         finally:
             self.sched_state.update({
                 "running": False, "course": "", "errors": errors[:5],
+                "restored": restored, "skipped": skipped,
                 "last": datetime.now().strftime("%H:%M:%S"),
             })
             self.push_schedule()
@@ -1522,7 +1540,8 @@ def api_schedule():
 def api_schedule_parse():
     """重新从课程正文里抽一遍。force=1 连"源文没变"的课也重抽。"""
     body = request.get_json(silent=True) or {}
-    started = backend.parse_schedule(bool(body.get("force")))
+    started = backend.parse_schedule(bool(body.get("force")),
+                                     manual=bool(body.get("manual")))
     return jsonify({"started": started, "state": backend.sched_state})
 
 

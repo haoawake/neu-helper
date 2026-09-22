@@ -365,6 +365,35 @@ class ScheduleStore:
         self.edit(iid, {"hidden": True})
         return True
 
+    def unhide(self, course_ids) -> int:
+        """把这几门课里被删掉的条目放回来,返回放回来几条。
+
+        **只清 `hidden` 这一个键**,别的手改(改过的名字、挪过的时间)原样留着
+        —— 那些才是重新解析最不该冲掉的东西。
+
+        谁调它:**只有用户自己点「重新解析」的时候**。每小时那次自动保鲜不调
+        —— 删掉一条抽错的东西之后,它不该在你不知道的时候自己爬回来,
+        那正是当初用 hidden 而不是真删的理由。
+        """
+        want = {str(c) for c in course_ids}
+        n = 0
+        with self._lock:
+            for cid, box in self._d["courses"].items():
+                if cid not in want:
+                    continue
+                for it in box.get("items") or []:
+                    iid = item_id(cid, it)
+                    patch = self._d["edits"].get(iid)
+                    if not (patch and patch.get("hidden")):
+                        continue
+                    patch.pop("hidden", None)
+                    if not patch:                  # 只剩个空壳就整条删掉
+                        self._d["edits"].pop(iid, None)
+                    n += 1
+            if n:
+                self._save()
+        return n
+
     def reset(self) -> None:
         """全部忘掉,包括手改和手加的。设置里那个「清空课表」用它。"""
         with self._lock:
