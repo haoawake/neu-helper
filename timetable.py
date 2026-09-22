@@ -379,6 +379,9 @@ class ScheduleStore:
         那儿(老师忘了结课的话,它连"这门课没了"都看不出来)。解析结果留着
         不删:万一那门课又回到在读列表,不用再花一次模型钱。
 
+        被删掉的条目走 `hidden` 一栏单独报上去,**不是丢掉** —— 界面要能
+        告诉人"这儿本来有三节课,是你删的",并且给一条恢复的路。
+
         名单是空的(仪表盘还没抓完)就全部照画 —— 那是"还不知道",
         不是"都过期了"。
         """
@@ -386,7 +389,7 @@ class ScheduleStore:
             d = json.loads(json.dumps(self._d))   # 深拷贝,下面要改
         short = {str(x["id"]): x.get("short") or x.get("code")
                  for x in (courses or [])}
-        items, notes, parsed, quiet = [], [], [], []
+        items, notes, parsed, quiet, gone = [], [], [], [], []
         for cid, box in d["courses"].items():
             if short and cid not in short:
                 continue
@@ -404,6 +407,19 @@ class ScheduleStore:
                 iid = item_id(cid, it)
                 patch = d["edits"].get(iid) or {}
                 if patch.get("hidden"):
+                    # **藏起来的也要报上去。** 藏了就不画格子,于是它从界面上
+                    # 彻底消失 —— 没有任何入口能把它找回来。更糟的是 item_id
+                    # 是按内容算的:重新解析,同一节课回来的还是同一个 id,
+                    # 照样被这条 hidden 压住。于是"点了重新解析还是空的"
+                    # 会一直持续下去,看着就像解析坏了。踩过。
+                    gone.append({
+                        "id": iid, "course": cs, "course_id": int(cid),
+                        "kind": it.get("kind") or "other",
+                        "title": it.get("title") or "",
+                        "weekday": it.get("weekday"),
+                        "start": it.get("start") or "",
+                        "end": it.get("end") or "",
+                    })
                     continue
                 row = {**it, **{k: v for k, v in patch.items() if k != "hidden"},
                        "id": iid, "course_id": int(cid), "course": cs,
@@ -418,8 +434,10 @@ class ScheduleStore:
             items.append({**m, "auto": False, "edited": False,
                           "course": m.get("course") or ""})
         items.sort(key=lambda x: (x["weekday"], x["start"]))
+        gone.sort(key=lambda x: (x["course"], x["weekday"] or 0, x["start"]))
         return {"items": items, "notes": notes, "parsed": parsed,
-                "quiet": quiet, "cost": round(d.get("cost", 0.0), 4)}
+                "quiet": quiet, "hidden": gone,
+                "cost": round(d.get("cost", 0.0), 4)}
 
 
 # ---------------------------------------------------------------- 跑模型

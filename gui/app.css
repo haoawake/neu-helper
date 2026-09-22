@@ -2752,6 +2752,14 @@ body.no-anim .upd-bar.is-flash { animation: none; }
 }
 .wk-note-t { flex: 1 1 auto; min-width: 0; }
 
+/* 被删掉的那几条。用 serious 那套暖色而不是红 —— 这不是错误,是"你自己
+   删的,格子里才没有",语气要像提醒不像报警 */
+.wk-note-gone { background: var(--serious-wash); color: var(--serious-ink); }
+.wk-note-gone .wk-note-c { color: var(--serious-ink); }
+.wk-note-gone .link-btn { margin-left: 8px; color: var(--serious-ink); font-weight: 650; }
+.wk-note-gone .link-btn:hover { text-decoration: underline; }
+.wk-gone-t { opacity: .85; }
+
 .sheet-narrow { width: min(460px, 100%); }
 /* .sheet-body 是给作业正文用的,带 white-space: pre-wrap —— 表单放进去的话
    标签之间的缩进和换行会变成一大片空白 */

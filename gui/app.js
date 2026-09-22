@@ -2059,6 +2059,52 @@ function renderWeekNotes(d) {
       `${quiet.join('、')} 没有每周固定安排`));
     box.appendChild(row);
   }
+  // 被删掉的条目。**这一段不能省** —— 藏起来的条目不画格子,于是它从界面上
+  // 彻底消失;而 item_id 是按内容算的,重新解析回来的还是同一个 id,照样被
+  // 压住。不说出来的话,人看到的就是"点了重新解析,格子还是空的",
+  // 会以为解析坏了。所以这里既要说清是谁干的,也要给一条回头路。
+  const gone = d.hidden || [];
+  if (gone.length) {
+    const row = el('div', 'wk-note wk-note-gone');
+    row.appendChild(el('span', 'wk-note-c', '删掉的'));
+    const t = el('span', 'wk-note-t');
+    t.appendChild(document.createTextNode(
+      `${gone.length} 条被你删掉了,所以格子里看不到 —— 重新解析也不会把它们请回来。`));
+    const all = el('button', 'link-btn wk-restore-all', '全部恢复');
+    all.type = 'button';
+    all.addEventListener('click', () => restoreWk(gone.map((x) => x.id)));
+    t.appendChild(all);
+    row.appendChild(t);
+    box.appendChild(row);
+    gone.forEach((g) => {
+      const r = el('div', 'wk-note wk-note-gone');
+      r.appendChild(el('span', 'wk-note-c', ''));
+      const b = el('span', 'wk-note-t');
+      b.appendChild(el('span', 'wk-gone-t',
+        `${g.course} · ${g.title} · ${WK_CN[g.weekday] || ''} ${g.start}–${g.end}`));
+      const btn = el('button', 'link-btn', '恢复');
+      btn.type = 'button';
+      btn.addEventListener('click', () => restoreWk([g.id]));
+      b.appendChild(btn);
+      r.appendChild(b);
+      box.appendChild(r);
+    });
+  }
+}
+
+// 课表面板那个「删除」的复位。wireWeek 里赋真身,在那之前调到也不出事
+let wfDisarm = () => {};
+
+/* 把删掉的条目放回来。revert = 丢掉这条 id 上的覆盖层,hidden 跟着没了。 */
+async function restoreWk(ids) {
+  for (const id of ids) {
+    try {
+      await apiPost('/api/schedule/item', { action: 'revert', id: id });
+    } catch (e) {
+      reportError('restoreWk', (e && e.message) || String(e), '', 0, e && e.stack);
+    }
+  }
+  await loadWeek();
 }
 
 /* 仪表盘上那一行:今天接下来还有什么。**不点进去也有用**,所以它不只是个
@@ -2157,6 +2203,7 @@ function openWkSheet(it) {
       : '');
   $('btnWfRevert').hidden = !(it && (it.auto || it.mail) && it.edited);
   $('btnWfDel').hidden = mk;
+  wfDisarm();                    // 上次点了一下没删就关掉的,复位
   $('weekSheet').hidden = false;
   $('wfTitle').focus();
 }
@@ -2298,8 +2345,28 @@ function wireWeek() {
   $('btnWfRevert').addEventListener('click', () => {
     if (state.weekEdit) wkSend({ action: 'revert', id: state.weekEdit.id });
   });
-  $('btnWfDel').addEventListener('click', () => {
-    if (state.weekEdit) wkSend({ action: 'delete', id: state.weekEdit.id });
+  // 删除要点两下,和对话那边一个路子(wireChatHistory)。**这里更要拦一下**:
+  // 这个按钮就贴在「保存」旁边,而自动抽出来的条目删掉之后是从格子里彻底
+  // 消失的 —— 以前连个找回的入口都没有,一次误点就等于这门课的上课时间没了。
+  const wfDel = $('btnWfDel');
+  let wfArmed = 0;
+  wfDisarm = () => {
+    wfArmed = 0;
+    wfDel.textContent = '删除';
+    wfDel.classList.remove('is-armed');
+  };
+  wfDel.addEventListener('click', () => {
+    if (!state.weekEdit) return;
+    if (Date.now() - wfArmed > 3000) {
+      wfArmed = Date.now();
+      wfDel.textContent = '确认删除?';
+      wfDel.classList.add('is-armed');
+      setTimeout(() => { if (Date.now() - wfArmed >= 3000) wfDisarm(); }, 3100);
+      return;
+    }
+    const id = state.weekEdit.id;
+    wfDisarm();
+    wkSend({ action: 'delete', id: id });
   });
 }
 
