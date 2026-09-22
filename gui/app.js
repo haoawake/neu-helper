@@ -155,6 +155,13 @@ async function copyText(text) {
     return true;
   } catch (e) { /* 没焦点或者没权限,走下面那条 */ }
   try {
+    // 这条路要靠"选中再 copy",而那会把用户**页面上**的选区顶掉 ——
+    // 按了个 Ctrl+C 结果高亮没了,看着像出了错。先记下来,完事放回去
+    const sel = window.getSelection();
+    const saved = [];
+    for (let i = 0; i < sel.rangeCount; i += 1) saved.push(sel.getRangeAt(i));
+    const back = document.activeElement;
+
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.setAttribute('readonly', '');
@@ -164,6 +171,10 @@ async function copyText(text) {
     ta.select();
     const ok = document.execCommand('copy');
     ta.remove();
+
+    sel.removeAllRanges();
+    saved.forEach((r) => sel.addRange(r));
+    if (back && back.focus) { try { back.focus(); } catch (err) { /* 没了就算 */ } }
     return ok;
   } catch (e) {
     return false;
@@ -187,6 +198,187 @@ function flashBtn(btn, label) {
 async function copyInto(btn, text) {
   if (!String(text || '').trim()) { flashBtn(btn, '这儿是空的'); return; }
   flashBtn(btn, (await copyText(text)) ? '已复制' : '复制不了');
+}
+
+/* 屏幕下方那个一闪而过的小提示。按钮上能改字的场合用 flashBtn,
+   右键菜单这种点完就消失的场合没有按钮可改,用它。 */
+let hintTimer = 0;
+
+function hint(text) {
+  let box = $('hintPill');
+  if (!box) {
+    box = el('div', 'hint-pill');
+    box.id = 'hintPill';
+    document.body.appendChild(box);
+  }
+  box.textContent = text;
+  box.classList.add('is-on');
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => box.classList.remove('is-on'), 1600);
+}
+
+/* ─────────────── 选中一段就能复制 ───────────────
+
+   **为什么这些要自己做。** pywebview 起 WebView2 的时候,把
+   `AreDefaultContextMenusEnabled` 和 `AreBrowserAcceleratorKeysEnabled`
+   一起绑在 debug 上,而我们是 debug=False —— 于是**右键根本不出菜单**,
+   选中一段话之后没有任何"复制"的入口。按 WebView2 的文档,Ctrl+C/V/X/A
+   这类编辑快捷键不在被关掉的范围里,但不能只押在这一条上。
+
+   所以这里补两样:一个自己画的右键菜单(中文、跟着应用的玻璃样式),
+   和一条 Ctrl/Cmd+C 的兜底。 */
+
+// 认得出"这是一块正文"的地方 —— 右键在这些里面才给菜单,
+// 在按钮和卡片上乱弹一个只有灰项的菜单比不弹更烦
+const TEXT_ZONES = '.chat-log, .brief-body, .mail-one, .sheet-body';
+
+/* 当前选中的文字。**输入框里的选区不在 document selection 里**
+   (Chromium 就是这么定的),得单独问它自己。 */
+function selText() {
+  const a = document.activeElement;
+  try {
+    if (a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT')
+        && typeof a.selectionStart === 'number'
+        && a.selectionStart !== a.selectionEnd) {
+      return String(a.value).slice(a.selectionStart, a.selectionEnd);
+    }
+  } catch (e) { /* type=time 之类没有 selectionStart,问了会抛 */ }
+  return String(window.getSelection() || '');
+}
+
+function selectNode(node) {
+  const r = document.createRange();
+  r.selectNodeContents(node);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+async function menuCopy(text) {
+  if (!String(text || '')) return;
+  hint((await copyText(text)) ? '已复制' : '复制不了');
+}
+
+async function cutIn(node) {
+  const a = node.selectionStart;
+  const b = node.selectionEnd;
+  const txt = String(node.value).slice(a, b);
+  if (!txt || !(await copyText(txt))) { hint('剪不动'); return; }
+  node.setRangeText('', a, b, 'end');
+  // 输入框靠 input 事件长高(autoGrowEl),不补一条它就不会收回去
+  node.dispatchEvent(new Event('input', { bubbles: true }));
+  hint('已剪切');
+}
+
+async function pasteIn(node) {
+  let txt = '';
+  try {
+    txt = await navigator.clipboard.readText();
+  } catch (e) {
+    // 读剪贴板要的权限比写严,被拒是正常的 —— 原生的 Ctrl+V 仍然好使
+    hint('读不到剪贴板,用 Ctrl+V');
+    return;
+  }
+  if (!txt) { hint('剪贴板是空的'); return; }
+  const a = node.selectionStart;
+  const b = node.selectionEnd;
+  node.setRangeText(txt, a, b, 'end');
+  node.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+let ctxMenu = null;
+
+function closeCtxMenu() {
+  if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; }
+}
+
+function showCtxMenu(x, y, items) {
+  closeCtxMenu();
+  const m = el('div', 'ctxmenu');
+  items.forEach((it) => {
+    const b = el('button', 'ctxmenu-i', it.label);
+    b.type = 'button';
+    b.disabled = !!it.off;
+    b.addEventListener('click', () => { closeCtxMenu(); it.run(); });
+    m.appendChild(b);
+  });
+  // 按下去不让焦点跑到菜单上 —— 输入框一旦失焦,「剪切」「全选」就找不到
+  // 原来那个选区了。文字选区同理
+  m.addEventListener('mousedown', (e) => e.preventDefault());
+  // 先摆上去量尺寸,再决定放哪儿 —— 贴着右边/底边弹出的话要翻到另一侧,
+  // 不然菜单有一半在窗口外面
+  m.style.visibility = 'hidden';
+  document.body.appendChild(m);
+  m.style.left = Math.max(4, Math.min(x, window.innerWidth - m.offsetWidth - 4)) + 'px';
+  m.style.top = Math.max(4, Math.min(y, window.innerHeight - m.offsetHeight - 4)) + 'px';
+  m.style.visibility = '';
+  ctxMenu = m;
+}
+
+function wireCopy() {
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || (e.key || '').toLowerCase() !== 'c') return;
+    const t = selText();
+    // **刻意不 preventDefault**:WebView2 自己那份 Ctrl+C 要是好用,
+    // 两边写进去的是同一段文字,重复一次没有代价;它要是被关掉了,
+    // 这条就顶上。拦下来反而可能把好用的那条也弄坏
+    if (t) copyText(t);
+  });
+
+  document.addEventListener('contextmenu', (e) => {
+    // 已经有人接管了(比如附件那个"打开所在文件夹"),别抢
+    if (e.defaultPrevented) return;
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const edit = t.tagName === 'TEXTAREA'
+      || (t.tagName === 'INPUT'
+          && /^(text|search|url|email|tel|number|password)$/i.test(t.type || 'text'));
+    const zone = t.closest(TEXT_ZONES);
+    const sel = selText();
+    if (!edit && !zone && !sel) return;     // 没什么可给的,就当没这回事
+    e.preventDefault();
+
+    const items = [{ label: '复制', off: !sel, run: () => menuCopy(sel) }];
+    if (edit) {
+      items.push({ label: '剪切', off: !sel, run: () => cutIn(t) });
+      items.push({ label: '粘贴', run: () => pasteIn(t) });
+      items.push({ label: '全选', run: () => t.select() });
+    } else {
+      const msg = t.closest('.msg');
+      const brief = t.closest('.brief-body');
+      if (msg && msg._raw) {
+        items.push({ label: '复制整条', run: () => menuCopy(msg._raw) });
+      } else if (brief) {
+        const raw = brief.id === 'mailBriefBody' ? state.mailBriefRaw : state.briefRaw;
+        items.push({ label: '复制整份简报', off: !raw, run: () => menuCopy(raw) });
+      }
+      if (msg || zone) {
+        items.push({ label: '全选这块', run: () => selectNode(msg || zone) });
+      }
+    }
+    showCtxMenu(e.clientX, e.clientY, items);
+  });
+
+  // 点别处、滚动、Esc、窗口失焦 —— 都收起来
+  document.addEventListener('mousedown', (e) => {
+    if (ctxMenu && !ctxMenu.contains(e.target)) closeCtxMenu();
+  }, true);
+  // **听滚轮而不是 scroll 事件。** 页面自己会滚:流式输出每来一段就
+  // `log.scrollTop = log.scrollHeight`,切页面也会把滚动位置归零 —— 那些都会
+  // 派发 scroll。挂在 scroll 上的话,Claude 一边写、你一边右键,菜单会被自己
+  // 的滚动关掉。wheel 和 touchmove 才是"人在滚"
+  document.addEventListener('wheel', closeCtxMenu, true);
+  document.addEventListener('touchmove', closeCtxMenu, true);
+  window.addEventListener('resize', closeCtxMenu);
+  // **捕获阶段**:Esc 的第一优先级是收起这个菜单。不抢的话同一下还会
+  // 顺手把底下的作业详情 / 设置面板一起关掉(它们的 Esc 挂在冒泡阶段)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && ctxMenu) {
+      closeCtxMenu();
+      e.stopPropagation();
+    }
+  }, true);
+  window.addEventListener('blur', closeCtxMenu);
 }
 
 // 应用内没有地址栏和登录态,外链一律交给系统浏览器
@@ -1937,7 +2129,11 @@ function openWkSheet(it) {
   ['wfRowKind', 'wfRowWho', 'wfRowPlace', 'wfRowUrl'].forEach((id) => {
     if ($(id)) $(id).hidden = isMail;
   });
-  $('btnWfMail').hidden = !(isMail && it.mid);
+  // 来源邮件。合并过的(几封信说同一件事)列成一份清单,点哪封开哪封;
+  // 只有一封就还是底下那个「看这封邮件」按钮,不值得为它撑出一块区域
+  const mails = (isMail && it.mails) || [];
+  renderWfMails(mails.length > 1 ? mails : []);
+  $('btnWfMail').hidden = !(isMail && it.mid) || mails.length > 1;
   // 星期对邮件日程是**算出来的**(日期决定),不是能改的。留着能看清是哪天,
   // 但禁掉 —— 不然改了它以为生效了,而 wkMailForm 根本不发这个字段
   $('wfWeekday').disabled = isMail;
@@ -1963,6 +2159,27 @@ function openWkSheet(it) {
   $('btnWfDel').hidden = mk;
   $('weekSheet').hidden = false;
   $('wfTitle').focus();
+}
+
+/* 把合并进这一条日程的几封信列出来。空列表 = 整块藏掉。 */
+function renderWfMails(mails) {
+  const box = $('wfMails');
+  box.textContent = '';
+  if (!mails.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.appendChild(el('div', 'wf-mails-h', `${mails.length} 封信说的是这件事`));
+  mails.forEach((m) => {
+    const b = el('button', 'wf-mail');
+    b.type = 'button';
+    b.disabled = !m.mid;
+    b.appendChild(el('span', 'wf-mail-d', (m.day || '').slice(5) || '—'));
+    b.appendChild(el('span', 'wf-mail-s', m.subject || '(没有主题)'));
+    b.title = m.mid ? '打开这封信' : '这封信已经不在本地索引里了';
+    if (m.mid) {
+      b.addEventListener('click', () => { closeWkSheet(); openMailById(m.mid); });
+    }
+    box.appendChild(b);
+  });
 }
 
 function closeWkSheet() {
@@ -5570,6 +5787,7 @@ function wireEvents() {
     }
   });
 
+  wireCopy();
   wireDragRegions();
   wireTitlebarDblClick();
   wirePrefs();

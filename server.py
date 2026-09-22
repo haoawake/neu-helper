@@ -1320,8 +1320,17 @@ class Backend:
         """哪些邮件带日程 —— 列表上那个小标识要用。
 
         只看**还没被删掉**的:用户把那条日程删了,卡片上就不该还挂着标。
+
+        合并过的日程要把**每一封来源信**都算上 —— 三封信说同一件事,课表上
+        是一条,但那三封信卡片上都该挂着标,不然点进去的人会以为漏抽了。
         """
-        keep = {e["mid"] for e in self.mail_event_list() if e.get("mid")}
+        keep = set()
+        for e in self.mail_event_list():
+            for src in e.get("sources") or []:
+                if src.get("mid"):
+                    keep.add(src["mid"])
+            if e.get("mid"):
+                keep.add(e["mid"])
         return keep
 
     # ------------------------------------------------------------ 课表

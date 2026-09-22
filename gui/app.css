@@ -970,6 +970,67 @@ body.is-memopeek #panelMemo {
   padding-left: 10px;
 }
 
+/* ═══════════ 右键菜单 + 选中复制 ═══════════
+
+   WebView2 自带的右键菜单被 pywebview 在 debug=False 下关掉了,这是我们
+   自己画的那个(见 app.js 的 wireCopy)。层级要盖过设置面板(60)。 */
+.ctxmenu {
+  position: fixed; z-index: 90;
+  min-width: 112px; padding: 4px;
+  display: flex; flex-direction: column;
+  /* **底下垫一层不透明的 --plane。** 别处的玻璃面(.sheet、两栏)是纯
+     半透明的,靠 backdrop-filter 模糊后的背景撑可读性。菜单不跟这个路子:
+     它经常正好压在一段正文上,透出下面的字会糊成一团,而且模糊层万一没
+     合成上就什么都看不见了。菜单本来也不该让人透过它读字。 */
+  background: linear-gradient(var(--glass-3), var(--glass-3)), var(--plane);
+  backdrop-filter: blur(var(--blur)) saturate(170%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(170%);
+  border: 1px solid var(--glass-edge-low);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--shadow-md);
+  -webkit-user-select: none; user-select: none;
+}
+/* **刻意没有入场动画。** 别处那个 `animation: rise … both` 的 `both` 会让
+   元素在动画真正跑起来之前停在关键帧的起点(opacity: 0)。页面加载时就在的
+   东西无所谓 —— 动画立刻就排上;这个菜单却是过很久之后才凭空建出来的,
+   排不上的那一下它就是个看不见的方块(无头测试里量到过 opacity: 0)。
+   何况右键菜单本来就该是即时出现的,淡入反而慢半拍。 */
+.ctxmenu-i {
+  padding: 5px 10px; border: none; border-radius: var(--radius-sm);
+  background: none; text-align: left;
+  font-family: var(--sans); font-size: 12.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.ctxmenu-i:hover:not(:disabled) { background: var(--accent-soft); }
+.ctxmenu-i:disabled { color: var(--text-muted); cursor: default; }
+
+/* 点完就消失的小提示。右键菜单那条路上没有按钮可以改字(flashBtn 那套
+   用不上),所以这里给一个统一的落点 */
+.hint-pill {
+  position: fixed; left: 50%; bottom: 26px; z-index: 95;
+  transform: translate(-50%, 6px);
+  padding: 6px 14px; border-radius: 999px;
+  font-size: 12.5px; color: var(--text-primary);
+  background: var(--glass-3);
+  backdrop-filter: blur(var(--blur)) saturate(170%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(170%);
+  border: 1px solid var(--glass-edge-low);
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--shadow-sm);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.hint-pill.is-on { opacity: 1; transform: translate(-50%, 0); }
+
+/* **正文一律可选中。** 没有哪条规则关掉过它,但写明白一点:这几块是
+   拿来读的,鼠标划过去就该能选。按钮和那行小动作反过来 —— 划选一段话的
+   时候不该把"复制""编辑"这几个字也圈进去 */
+.chat-log, .brief-body, .mail-one, .msg-body, .sheet-body {
+  -webkit-user-select: text; user-select: text;
+  cursor: auto;
+}
+.msg-acts, .msg-role, .suggests, .ctx-bar { -webkit-user-select: none; user-select: none; }
+
 /* ── 每条消息底下那行小动作(复制 / 编辑)──
    平时是隐形的,鼠标停到这条消息上、或者键盘 tab 进去才浮出来 ——
    常驻的话一屏都是灰按钮,比消息本身还抢眼。
@@ -1221,6 +1282,35 @@ a.md-link {
   color: var(--text-secondary);
 }
 .sheet-foot { display: flex; gap: 8px; padding: 13px 18px; border-top: 1px solid var(--hairline); }
+
+/* 合并进一条日程的那几封邮件 */
+.wf-mails {
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+  display: flex; flex-direction: column; gap: 4px;
+  white-space: normal;
+}
+.wf-mails-h {
+  margin-bottom: 3px;
+  font-size: 11.5px; color: var(--text-muted);
+}
+.wf-mail {
+  display: flex; align-items: baseline; gap: 9px;
+  width: 100%; padding: 6px 9px;
+  font-family: var(--sans); font-size: 12.5px; text-align: left;
+  color: var(--text-secondary);
+  background: var(--glass-2);
+  border: 1px solid var(--glass-edge-low);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease),
+              background-color var(--dur-fast) var(--ease);
+}
+.wf-mail:hover { color: var(--text-primary); background: var(--glass-hover); }
+.wf-mail:disabled { opacity: .55; cursor: default; }
+.wf-mail-d { flex: 0 0 auto; font-size: 11.5px; color: var(--text-muted); }
+/* 主题一行装不下就截断 —— 这个面板是窄的,折成三行会把按钮挤下去 */
+.wf-mail-s { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .btn {
   padding: 8px 15px;
