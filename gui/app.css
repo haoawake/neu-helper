@@ -970,6 +970,67 @@ body.is-memopeek #panelMemo {
   padding-left: 10px;
 }
 
+/* ── 每条消息底下那行小动作(复制 / 编辑)──
+   平时是隐形的,鼠标停到这条消息上、或者键盘 tab 进去才浮出来 ——
+   常驻的话一屏都是灰按钮,比消息本身还抢眼。
+   用 opacity 而不是 display:none:这样高度不跳,鼠标划过一列消息时
+   下面的内容不会跟着上下弹。 */
+.msg-acts {
+  display: flex; gap: 2px;
+  margin-left: -6px;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.msg:hover > .msg-acts,
+.msg:focus-within > .msg-acts { opacity: 1; }
+/* 没有鼠标的场合(触摸屏)悬停永远不成立,那就一直露着 */
+@media (hover: none) { .msg-acts { opacity: .75; } }
+
+.msg-act {
+  border: none; background: none;
+  /* 压得很扁:这一行是常驻在布局里的(见上面那段),一条消息多占 15px
+     就够了,再高整栏就散了 */
+  padding: 1px 6px; line-height: 1.25; border-radius: var(--radius-sm);
+  color: var(--text-muted); font-size: 11px; font-family: var(--sans);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease),
+              background-color var(--dur-fast) var(--ease);
+}
+.msg-act:hover { color: var(--text-primary); background: var(--wash); }
+.msg-act.is-done { color: var(--accent); }
+
+/* 改一句重发:气泡就地变成输入框 */
+.msg-edit { display: flex; flex-direction: column; gap: 7px; }
+.msg-edit-ta {
+  width: 100%; box-sizing: border-box;
+  resize: none; max-height: 140px;
+  padding: 9px 12px;
+  font-family: var(--sans); font-size: 13.5px; line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--glass-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+}
+.msg-edit-ta:focus { outline: none; }
+.msg-edit-row { display: flex; align-items: center; gap: 9px; }
+.msg-edit-tip {
+  flex: 1; min-width: 0;
+  font-size: 11.5px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.msg-edit-send {
+  flex: 0 0 auto;
+  padding: 4px 13px; border-radius: 999px; border: none;
+  background: var(--accent); color: #fff;
+  font-family: var(--sans); font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--accent-soft), inset 0 1px 0 rgba(255, 255, 255, .28);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.msg-edit-send:hover { transform: translateY(-1px); }
+.msg-edit-send:active { transform: scale(.96); }
+
 /* 流式输出时的光标。**刻意不做闪烁动画。**
    它在一个带 backdrop-filter 的大容器里,每次 opacity 变化都会让整块模糊
    区域重算 —— 表现就是整栏每秒闪一下(实测过的"闪屏"来源之一)。

@@ -79,6 +79,8 @@ const state = {
   briefIndex: [],      // 简报目录(日期倒序)
   briefToday: '',      // 今天的日期字符串
   briefLive: '',       // 正在流式生成的简报原文
+  briefRaw: '',        // 当前这份简报的 markdown 原文(「复制」按钮用)
+  mailBriefRaw: '',
   briefGenerating: false,
   mode: 'full',        // 'orb' | 'chat' | 'full'(orb 时这个窗口是隐藏的)
   showDismissed: true, // 划掉的条目是否还列出来(默认列,方便撤回)
@@ -138,6 +140,53 @@ async function apiPost(path, body) {
   });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
+}
+
+/* ─────────────── 复制到剪贴板 ───────────────
+   页面是 http://127.0.0.1 起的,算「安全上下文」,所以 navigator.clipboard
+   在 WebView2 里是能用的。但它要求文档有焦点 —— 窗口刚从悬浮球展开、或者
+   焦点在原生控件上的时候会被拒。所以留一条老路(隐藏 textarea +
+   execCommand)兜底,两条都不成才报"复制不了"。 */
+async function copyText(text) {
+  text = String(text == null ? '' : text);
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) { /* 没焦点或者没权限,走下面那条 */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // 不能用 display:none —— 选不中就复制不了。挪到屏幕外
+    ta.style.cssText = 'position:fixed;top:-1000px;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+/* 按钮文字临时换成一句反馈,1.4 秒后换回来。
+   不弹 toast:对话里一条一条复制的时候,满屏飘提示很吵。 */
+function flashBtn(btn, label) {
+  if (!btn) return;
+  if (btn.dataset.label === undefined) btn.dataset.label = btn.textContent;
+  btn.textContent = label;
+  btn.classList.add('is-done');
+  clearTimeout(btn._flash);
+  btn._flash = setTimeout(() => {
+    btn.textContent = btn.dataset.label;
+    btn.classList.remove('is-done');
+  }, 1400);
+}
+
+async function copyInto(btn, text) {
+  if (!String(text || '').trim()) { flashBtn(btn, '这儿是空的'); return; }
+  flashBtn(btn, (await copyText(text)) ? '已复制' : '复制不了');
 }
 
 // 应用内没有地址栏和登录态,外链一律交给系统浏览器
@@ -752,9 +801,17 @@ function addMsg(role, text, ctx) {
   return addMsgIn($('chatLog'), role, text, ctx);
 }
 
-/* 往指定的对话框里加一条消息。课业和邮箱两个页面共用。 */
+/* 往指定的对话框里加一条消息。课业和邮箱两个页面共用。
+
+   **data-i 是这条消息在存档里的下标**(data/chats.json 那个数组)。「改一句
+   重发」就是拿它去砍历史的,所以这里的编号必须和后端一条一条对得上:
+   只有真会落盘的(自己说的 + Claude 答的)才编号,出错气泡和"试试问"那块
+   都不编 —— 它们不进存档。 */
 function addMsgIn(log, role, text, ctx) {
   const msg = el('div', `msg msg-${role}`);
+  if (role === 'user' || role === 'assistant') {
+    msg.dataset.i = String(log.querySelectorAll('.msg[data-i]').length);
+  }
   msg.appendChild(el('div', 'msg-role', role === 'user' ? '我' : role === 'error' ? '出错' : 'Claude'));
   // **Claude 那一侧要过一遍 markdown。** 流式那条气泡一直是渲染过的
   // (flushChatBubble),但读回历史走的是这儿 —— 原来直接塞纯文本,于是
@@ -775,9 +832,115 @@ function addMsgIn(log, role, text, ctx) {
     });
     msg.appendChild(line);
   }
+  // 复制的是 markdown 原文,不是渲染后的文字 —— 粘到别处才还是那份格式
+  msg._raw = text || '';
+  // 流式那条气泡是空着建出来的,等写完了再挂按钮(见 finishBubble)
+  if (msg._raw) attachMsgActions(msg);
   log.appendChild(msg);
   log.scrollTop = log.scrollHeight;
   return body;
+}
+
+/* ── 每条消息底下那行小动作 ──
+   平时淡着,鼠标停到这条上才显出来。自己说的话多一个「编辑」:
+   改完重发会把这条之后的都作废,和 ChatGPT 那套一样。 */
+function attachMsgActions(msg) {
+  if (!msg || msg.querySelector(':scope > .msg-acts')) return;
+  const row = el('div', 'msg-acts');
+  row.appendChild(msgActBtn('复制', '复制这条的原文', (b) => copyInto(b, msg._raw)));
+  if (msg.classList.contains('msg-user') && msg.dataset.i !== undefined) {
+    row.appendChild(msgActBtn('编辑', '改一改,重新发一次', () => startEditMsg(msg)));
+  }
+  msg.appendChild(row);
+}
+
+function msgActBtn(label, title, fn) {
+  const b = el('button', 'msg-act', label);
+  b.type = 'button';
+  b.title = title;
+  b.addEventListener('click', () => fn(b));
+  return b;
+}
+
+/* 流式写完了:把攒下来的原文记到气泡上,顺手把按钮挂上去。 */
+function finishBubble(bubble, raw) {
+  if (!bubble) return;
+  const msg = bubble.closest ? bubble.closest('.msg') : null;
+  if (!msg) return;
+  msg._raw = raw || '';
+  if (msg._raw) attachMsgActions(msg);
+}
+
+/* ── 改一句重发 ──
+   气泡就地变成输入框(不是把文字丢回底下的输入栏)—— 这样看得见改的是
+   哪一条。Enter 发送、Shift+Enter 换行、Esc 放弃,和主输入框一个手感。 */
+function startEditMsg(msg) {
+  const log = msg.parentElement;
+  if (!log || msg.querySelector('.msg-edit')) return;
+  const isMail = log.id === 'mailChatLog';
+  const body = msg.querySelector('.msg-body');
+  const acts = msg.querySelector(':scope > .msg-acts');
+  const box = el('div', 'msg-edit');
+  const ta = el('textarea', 'msg-edit-ta');
+  ta.value = msg._raw || (body ? body.textContent : '');
+  const row = el('div', 'msg-edit-row');
+  const tip = el('span', 'msg-edit-tip', '发出去之后,这条以下的都不作数了');
+  const cancel = el('button', 'link-btn', '取消');
+  cancel.type = 'button';
+  const send = el('button', 'msg-edit-send', '发送');
+  send.type = 'button';
+  row.appendChild(tip);
+  row.appendChild(cancel);
+  row.appendChild(send);
+  box.appendChild(ta);
+  box.appendChild(row);
+
+  const close = () => {
+    box.remove();
+    if (body) body.hidden = false;
+    if (acts) acts.hidden = false;
+  };
+  cancel.addEventListener('click', close);
+  send.addEventListener('click', () => submitEdit(msg, ta.value, isMail, close, send));
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    // isComposing:中文输入法选字时的那个回车不算发送
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      submitEdit(msg, ta.value, isMail, close, send);
+    }
+  });
+  ta.addEventListener('input', () => autoGrowEl(ta));
+
+  if (body) body.hidden = true;
+  if (acts) acts.hidden = true;
+  msg.insertBefore(box, acts || null);
+  autoGrowEl(ta);
+  ta.focus();
+  // 光标摆到末尾:多半是想接着补两句,而不是从头重写
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function submitEdit(msg, text, isMail, close, btn) {
+  text = (text || '').trim();
+  if (!text) return;
+  // 上一轮还在写就先不动:后端一次只跑一个问题,砍了历史又发不出去最难受。
+  // 编辑框留在原地,等答完再点一次就行
+  if (isMail ? state.mailStreaming : state.streaming) {
+    flashBtn(btn, '等这轮答完');
+    return;
+  }
+  const idx = Number(msg.dataset.i);
+  const log = msg.parentElement;
+  close();
+  if (Number.isInteger(idx) && log) {
+    // 这条和它后面的全部作废 —— 后端那边也会砍到同一个位置
+    let n = log.lastElementChild;
+    while (n && n !== msg) { const prev = n.previousElementSibling; n.remove(); n = prev; }
+    msg.remove();
+  }
+  if (isMail) sendMailChat(text, { editIndex: idx });
+  else sendChat(text, { editIndex: idx });
 }
 
 /* ── 增量渲染的合并 ──
@@ -809,6 +972,8 @@ function flushChatBubble() {
 
 function flushBriefBody() {
   const box = $('briefBody');
+  // 边写边更新原文,这样生成到一半也能整份复制走
+  state.briefRaw = state.briefLive;
   box.textContent = '';
   box.classList.add('streaming');
   box.appendChild(el('div', 'brief-meta', `${state.briefToday} · 正在生成…`));
@@ -836,6 +1001,7 @@ function setStreaming(on) {
       // 写完了:补最后一次渲染,再把光标和 streaming 摘掉
       renderMarkdown(state.bubbleRaw, state.bubble);
       state.bubble.classList.remove('caret', 'streaming');
+      finishBubble(state.bubble, state.bubbleRaw);
     }
     state.bubble = null;
   }
@@ -907,9 +1073,13 @@ function connectStream() {
 async function sendChat(text, opts) {
   text = (text || '').trim();
   if (!text || state.streaming) return;
+  // editIndex >= 0 就是「改一句重发」:走另一个接口,后端会先把存档砍到
+  // 这一条,再换一条会话把前文补回去(见 server.resend_edited)
+  const edit = opts && Number.isInteger(opts.editIndex) ? opts.editIndex : -1;
   // 关联对象只在"这组对象变化后的第一条消息"附过去:后续追问靠会话上下文
-  // 接着就行,每轮都重发是白烧额度
-  const ctx = state.ctxSent ? [] : state.ctx.slice();
+  // 接着就行,每轮都重发是白烧额度。**重发是例外** —— 那边的会话是新起的,
+  // 不重新附一遍它就不知道在问哪个作业了
+  const ctx = (edit >= 0 || !state.ctxSent) ? state.ctx.slice() : [];
   // 开机简报是自动发的,显示成用户说的话会很怪
   if (!(opts && opts.silent)) addMsg('user', text, state.ctx.slice());
   $('chatInput').value = '';
@@ -918,14 +1088,20 @@ async function sendChat(text, opts) {
   setChatStatus('连接中…');
   let r;
   try {
-    r = await apiPost('/api/chat', { message: text, context: ctx });
+    r = await apiPost(edit >= 0 ? '/api/chat/edit' : '/api/chat',
+                      { message: text, context: ctx, index: edit });
     if (ctx.length) state.ctxSent = true;
   } catch (e) {
     addMsg('error', '后端没响应:' + e.message);
     setStreaming(false);
+    if (edit >= 0) openChat(state.chatId);   // 界面已经砍了、后端没砍,重新对齐
     return;
   }
-  if (!r.ok) { addMsg('error', r.message); setStreaming(false); }
+  if (!r.ok) {
+    addMsg('error', r.message);
+    setStreaming(false);
+    if (edit >= 0) openChat(state.chatId);
+  }
 }
 
 function autoGrow() {
@@ -3170,6 +3346,7 @@ async function loadMailBriefIndex() {
 
 async function showMailBrief(date, meta) {
   const box = $('mailBriefBody');
+  state.mailBriefRaw = '';
   box.textContent = '';
   box.classList.remove('streaming');
   if (!date) {
@@ -3185,6 +3362,7 @@ async function showMailBrief(date, meta) {
     box.appendChild(el('div', 'empty', '读不到:' + e.message));
     return;
   }
+  state.mailBriefRaw = d.text || '';
   box.appendChild(el('div', 'brief-meta', `${date}${d.at ? ' · 生成于 ' + d.at : ''}`));
   const body = el('div');
   renderMarkdown(d.text || '(空)', body);
@@ -3222,6 +3400,7 @@ function handleMailBriefEvent(ev) {
 
 function flushMailBrief() {
   const box = $('mailBriefBody');
+  state.mailBriefRaw = state.mailBriefLive;
   box.textContent = '';
   box.classList.add('streaming');
   box.appendChild(el('div', 'brief-meta', `${state.mailBriefToday} · 正在生成…`));
@@ -3250,6 +3429,7 @@ function setMailStreaming(on) {
     if (state.mailBubble) {
       renderMarkdown(state.mailBubbleRaw, state.mailBubble);
       state.mailBubble.classList.remove('caret', 'streaming');
+      finishBubble(state.mailBubble, state.mailBubbleRaw);
     }
     state.mailBubble = null;
   }
@@ -3310,10 +3490,11 @@ function flushMailChat() {
   log.scrollTop = log.scrollHeight;
 }
 
-async function sendMailChat(text) {
+async function sendMailChat(text, opts) {
   text = (text || '').trim();
   if (!text || state.mailStreaming) return;
-  const ctx = state.mailCtxSent ? [] : state.mailCtx.slice();
+  const edit = opts && Number.isInteger(opts.editIndex) ? opts.editIndex : -1;
+  const ctx = (edit >= 0 || !state.mailCtxSent) ? state.mailCtx.slice() : [];
   addMsgIn($('mailChatLog'), 'user', text, state.mailCtx.slice());
   $('mailChatInput').value = '';
   autoGrowEl($('mailChatInput'));
@@ -3321,14 +3502,20 @@ async function sendMailChat(text) {
   setMailChatStatus('连接中…');
   let r;
   try {
-    r = await apiPost('/api/mailchat', { message: text, context: ctx });
+    r = await apiPost(edit >= 0 ? '/api/mailchat/edit' : '/api/mailchat',
+                      { message: text, context: ctx, index: edit });
     if (ctx.length) state.mailCtxSent = true;
   } catch (e) {
     addMsgIn($('mailChatLog'), 'error', '后端没响应:' + e.message);
     setMailStreaming(false);
+    if (edit >= 0) openMailChat(state.mailChatId);
     return;
   }
-  if (!r.ok) { addMsgIn($('mailChatLog'), 'error', r.message); setMailStreaming(false); }
+  if (!r.ok) {
+    addMsgIn($('mailChatLog'), 'error', r.message);
+    setMailStreaming(false);
+    if (edit >= 0) openMailChat(state.mailChatId);
+  }
 }
 
 async function loadMailChatIndex() {
@@ -3470,6 +3657,8 @@ function wireMail() {
     state.mailBriefPinned = true;
     showMailBrief(e.target.value);
   });
+  $('btnCopyMailBrief').addEventListener('click', (e) =>
+    copyInto(e.currentTarget, state.mailBriefRaw));
   $('btnMailGenBrief').addEventListener('click', async () => {
     const already = state.mailBriefIndex.some((x) => x.date === state.mailBriefToday);
     const r = await apiPost('/api/mail/briefings/generate', { force: already });
@@ -3931,6 +4120,7 @@ async function loadBriefIndex() {
 
 function showBriefEmpty(d) {
   const box = $('briefBody');
+  state.briefRaw = '';
   box.textContent = '';
   const wrap = el('div', 'brief-empty');
   if (d && d.generating) {
@@ -3950,10 +4140,12 @@ async function showBrief(date) {
   try {
     d = await apiGet('/api/briefings/' + date);
   } catch (e) {
+    state.briefRaw = '';
     box.textContent = '';
     box.appendChild(el('div', 'brief-empty', '读取这一天的简报失败。'));
     return;
   }
+  state.briefRaw = d.text || '';
   box.textContent = '';
   const meta = el('div', 'brief-meta');
   meta.appendChild(
@@ -5421,6 +5613,10 @@ function wireEvents() {
     state.briefPinned = true;
     showBrief(e.target.value);
   });
+
+  // 复制的是 markdown 原文,不是渲染后的样子 —— 粘进备忘录或者微信都还能看
+  $('btnCopyBrief').addEventListener('click', (e) =>
+    copyInto(e.currentTarget, state.briefRaw));
 
   $('btnGenBrief').addEventListener('click', async () => {
     if (state.briefGenerating) return;

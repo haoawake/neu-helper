@@ -1632,6 +1632,47 @@ def api_chat():
     return jsonify({"ok": True, "chat_id": cid})
 
 
+def resend_edited(chat_session, store, d: dict) -> dict:
+    """「改一句重发」:砍掉那条及之后的历史,重开会话,把前文补回去。
+
+    CLI 的会话没法回退 —— 里头还留着被砍掉的那一问一答,再 `--resume` 上去
+    模型看到的是原来那句。所以这里换一条时间线:丢掉 session_id,把截断之后
+    的存档拼成一个 `<以往对话>` 块跟新消息一起发过去。
+
+    因为前文已经在消息里了,`fallback_context` 就留空 —— 重试时原样再发一遍
+    就是对的,拼两遍反而重复。
+    """
+    msg = str(d.get("message") or "")
+    ctx = d.get("context") or []
+    try:
+        index = int(d.get("index", -1))
+    except (TypeError, ValueError):
+        index = -1
+    if not msg.strip():
+        return {"ok": False, "message": "空消息"}
+    if chat_session.is_busy():
+        return {"ok": False, "message": "上一个问题还在回答"}
+    cid = store.active_id()
+    if index >= 0:
+        store.truncate(cid, index)
+    store.clear_session(cid)
+    chat_session.fork()
+    head = store.context_block(cid)        # 砍完之后、加新消息之前的那段前文
+    store.add(cid, "user", msg, ctx=ctx)
+    prompt = context_prefix(ctx) + msg
+    if head:
+        prompt = head + chr(10) * 2 + prompt
+    backend.mark_hot()
+    chat_session.send_async(prompt)
+    return {"ok": True, "chat_id": cid}
+
+
+@app.post("/api/chat/edit")
+def api_chat_edit():
+    d = request.get_json(silent=True) or {}
+    return jsonify(resend_edited(backend.chat, backend.chats, d))
+
+
 @app.post("/api/chat/reset")
 def api_chat_reset():
     """新对话:旧的那段留在存档里,不是清空。"""
@@ -2866,6 +2907,12 @@ def api_mailchat():
         context_prefix(ctx) + msg,
         fallback_context=backend.mail_chats.context_block(cid))
     return jsonify({"ok": True, "chat_id": cid})
+
+
+@app.post("/api/mailchat/edit")
+def api_mailchat_edit():
+    d = request.get_json(silent=True) or {}
+    return jsonify(resend_edited(backend.mail_chat, backend.mail_chats, d))
 
 
 @app.post("/api/mailchat/reset")

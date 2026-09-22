@@ -128,6 +128,16 @@ class ChatSession:
         self.session_id = None
         self.total_cost = 0.0
 
+    def fork(self) -> None:
+        """砍掉历史之后换一条时间线:丢掉 session_id,但**不清成本**。
+
+        和 reset() 的区别是后者代表"新对话",连累计花销一起归零;改一句重发
+        还是同一段对话,那些钱已经花掉了。CLI 的会话没法回退(里头还留着被
+        砍掉的那一问一答),所以只能重开一段、把前文自己补回去。
+        """
+        self.cancel()
+        self.session_id = None
+
     def cancel(self) -> None:
         proc = self._proc
         if proc and proc.poll() is None:

@@ -170,6 +170,39 @@ class ChatStore:
                 c["session_id"] = session_id
                 self._save()
 
+    def clear_session(self, cid: str) -> None:
+        """丢掉 CLI 那边的会话 id。
+
+        set_session 刻意不接受空值(那是"这轮没拿到 id"的常态),砍历史是另一
+        回事:会话里还留着被砍掉的那几轮,再 `--resume` 上去模型看到的还是
+        原来那个问题。
+        """
+        with self._lock:
+            c = self._find(cid)
+            if c is not None and c.get("session_id") is not None:
+                c["session_id"] = None
+                self._save()
+
+    def truncate(self, cid: str, index: int) -> int:
+        """砍掉第 index 条(从 0 数)和它之后的所有消息,返回砍掉几条。
+
+        「改一句重发」用的:被改掉的那一问、以及基于它答出来的那一段,都不该
+        留在历史里 —— 留着的话存档和模型看到的前文就对不上了。
+        """
+        with self._lock:
+            c = self._find(cid)
+            if c is None or index < 0 or index >= len(c["messages"]):
+                return 0
+            dropped = len(c["messages"]) - index
+            c["messages"] = c["messages"][:index]
+            # 第一句也被砍了:标题让给下一句重新取(add() 只在标题还是
+            # "新对话"的时候才取,不还原的话目录里挂的还是旧标题)
+            if not c["messages"]:
+                c["title"] = "新对话"
+            c["updated"] = _now()
+            self._save()
+            return dropped
+
     def delete(self, cid: str) -> bool:
         with self._lock:
             c = self._find(cid)
