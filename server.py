@@ -881,14 +881,17 @@ class Backend:
                 info.update({"git_behind": g["behind"],
                              "git_upstream": g.get("upstream") or "",
                              "git_subjects": g.get("subjects") or []})
-            elif info.get("newer"):
-                # **源码版特有的状态:代码已经是新的了,只是进程还是旧的。**
-                # "有更新吗"问的是 GitHub Release 和内存里的 VERSION,
-                # "更新"做的是 git 快进 —— 工作区已经追平的时候这两件事
-                # 会互相打脸:横幅说"有新版本",点下去 git 说"已经是最新的
-                # 代码了",然后横幅就没了。用户看到的就是自相矛盾。
-                # 这种情况要做的不是更新,是**重启**
-                info["stale_process"] = True
+        # **代码已经换新、但这个进程还是旧的。** 判据是「磁盘上的 version.py
+        # vs 内存里的 VERSION」—— 不联网、不猜。原来是拿 GitHub Release 和内存
+        # 比,那个比法在工作区已经追平的时候会说"有新版本",点下去 git 却无事
+        # 可做,两句话自相矛盾。这种情况要做的不是更新,是**重启**
+        disk = updater.disk_version(HERE)
+        if disk and appver.is_newer(disk, appver.VERSION):
+            info["ok"] = True
+            info.setdefault("current", appver.VERSION)
+            info["stale_process"] = True
+            info["disk_version"] = disk
+            info.setdefault("latest", disk)
         if info.get("ok"):
             self.update_info = info
             self.push_update(info, self.updater.snapshot())
@@ -1999,6 +2002,13 @@ def api_update_apply():
     """
     info = backend.update_info or {}
     kind = updater.install_kind(HERE)
+    # 代码已经换新、只是进程旧了 —— 这时候"更新"该做的就是重启。
+    # git 那条路自己会认出来(_run_git 里 behind==0 那一支),别的安装方式
+    # 在这儿处理
+    if kind != "git" and info.get("stale_process"):
+        if updater.restart(HERE):
+            threading.Timer(0.8, lambda: os._exit(0)).start()
+            return jsonify({"ok": True, "kind": kind, "restarted": True})
     if kind == "git":
         started = backend.updater.start_git()
         return jsonify({"ok": started, "kind": kind,

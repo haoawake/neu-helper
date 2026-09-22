@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -177,6 +178,22 @@ def check() -> dict:
         "published": (d.get("published_at") or "")[:10],
         "checked": time.strftime("%Y-%m-%d %H:%M"),
     }
+
+
+def disk_version(here: Path) -> str:
+    """**磁盘上** version.py 写的版本号。
+
+    和内存里的 VERSION 不一样,就说明代码已经换过了、而这个进程还是旧的
+    (git pull 过、或者开发时直接改了文件)。**不联网**就能回答"要不要重启"
+    —— 比拿 GitHub Release 去和内存里的版本比准得多:那个比法在"代码已经
+    追平但进程没重启"的时候会说"有新版本",点下去却无事可做。
+    """
+    try:
+        txt = (here / "version.py").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = re.search(r'^VERSION\s*=\s*"([^"]+)"', txt, re.M)
+    return m.group(1) if m else ""
 
 
 def restart(here: Path) -> bool:
@@ -345,6 +362,18 @@ class Updater:
             code, behind = self._git("rev-list", "--count", f"HEAD..{upstream}")
             code2, ahead = self._git("rev-list", "--count", f"{upstream}..HEAD")
             if code == 0 and behind == "0":
+                # 没东西可快进。但**用户是点了「更新」才走到这儿的** ——
+                # 如果磁盘上的代码已经比这个进程新(之前 pull 过、或者开发时
+                # 改过),真正要做的就是重启,而不是回一句"已经是最新的代码了"
+                # 然后什么都不做。原来那样点下去毫无变化,还和横幅说的
+                # "有新版本"自相矛盾
+                disk = disk_version(self.here)
+                if disk and ver.is_newer(disk, ver.VERSION):
+                    self._set(phase="restarting",
+                              msg=f"代码已经是 v{disk} 了,正在重启…")
+                    self._respawn()
+                    time.sleep(1.0)
+                    os._exit(0)
                 self._set(phase="idle", msg="", error="")
                 self._set(phase="done", msg="已经是最新的代码了")
                 return

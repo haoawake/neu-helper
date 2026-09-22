@@ -2563,7 +2563,7 @@ function renderUpdate(info, job) {
         ? `有新版本 v${i.latest}`
           + (i.published ? `(${i.published})` : '')
           + ` —— 你现在是 v${i.current}`
-        : `源码有 ${gitN} 个新提交 —— 点更新就快进`;
+        : `源码有 ${gitN} 个新提交 —— 点「更新并重启」快进到最新`;
     // 源码版没有 Release notes 可看,提交标题就是"改了什么"
     bar.title = relNew ? '' : (i.git_subjects || []).join('\n');
   }
@@ -2576,15 +2576,18 @@ function renderUpdate(info, job) {
       : relNew ? `${head} · 有新版本 v${i.latest}`
         : gitN ? `${head} · 源码落后 ${gitN} 个提交`
           : (i.latest ? `已经是最新的(v${cur || i.latest})` : head));
-  // 「更新」两处也要一起切:横幅上那个原来从不隐藏,于是 stale 状态下
-  // 会和「重启生效」并排站着 —— 而那时候点它是无事可做的
+  // **一个按钮,文案随状态变。** 用户不该先判断"我属于哪种情况"再选按钮:
+  //   有新版本 / 源码落后 -> 更新并重启(先换代码,再重起,顺序就是这个)
+  //   代码已新、进程旧     -> 重启生效(没东西可换,只差重起)
+  const label = stale ? '重启生效' : '更新并重启';
   ['updGo', 'btnUpdGo'].forEach((id) => {
-    if ($(id)) $(id).hidden = !(relNew || gitN) || stale;
-  });
-  // 代码已经换新、只是进程旧了 —— 该做的是重启,不是更新。
-  // 两处按钮都要切:横幅上那个和设置面板里那个
-  ['updRestart', 'btnUpdRestart'].forEach((id) => {
-    if ($(id)) $(id).hidden = !stale;
+    const b = $(id);
+    if (!b) return;
+    b.hidden = !(relNew || gitN || stale);
+    b.textContent = label;
+    b.title = stale
+      ? '代码已经是新的了,只是这个窗口还跑着旧的 —— 点一下重起一份'
+      : '换成新代码并自动重启,你的邮件/对话/课件/设置都不动';
   });
   // 「改了什么」只在有 Release 页可看的时候给 —— 源码版点开会落到
   // 上一个 Release 的页面,那是在说谎
@@ -2701,19 +2704,6 @@ async function checkUpdate() {
     }
   } catch (e) {
     setUpdState('查不到:' + ((e && e.message) || e));
-  }
-}
-
-/* 重启应用。给"代码已经换新、但这个窗口还跑着旧的"那种情况用 ——
-   那时候点「更新」是无事可做的(git 已经追平),真正要做的就是重起一份。 */
-async function restartApp() {
-  setUpdState('正在重启…');
-  try {
-    const r = await apiPost('/api/update/restart', {});
-    if (r && r.ok === false) setUpdState(r.error || '重启没成功');
-  } catch (e) {
-    // 后端会在回完这条之后立刻退出,所以连接被掐断是**正常**的
-    setUpdState('正在重启…');
   }
 }
 
@@ -5315,10 +5305,6 @@ function wirePrefs() {
   $('btnUpdCheck').addEventListener('click', () => checkUpdate());
   $('btnUpdGo').addEventListener('click', () => applyUpdate());
   $('updGo').addEventListener('click', () => applyUpdate());
-  // 两处「重启生效」是同一件事:横幅上一个、设置面板里一个
-  ['updRestart', 'btnUpdRestart'].forEach((id) => {
-    if ($(id)) $(id).addEventListener('click', () => restartApp());
-  });
   $('updWhat').addEventListener('click', () => {
     const box = $('updNotes');
     if (!box) return;
