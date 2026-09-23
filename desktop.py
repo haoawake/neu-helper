@@ -117,6 +117,88 @@ def autostart_dir() -> Path:
 _keep = None                      # 故意不释放:进程活着,锁就该一直占着
 
 
+# ---------------------------------------------------------------- 开机自启
+
+# 开机那一项叫什么。装机脚本(install.ps1 / install.sh)建的就是这两个,
+# 设置里的开关认的也是它们 —— 名字必须对得上,不然会各建各的。
+AUTOSTART_NAME = "NEU Helper"
+
+
+def autostart_path() -> Path:
+    """开机那一项的完整路径。"""
+    if platform_id.IS_MAC:
+        return autostart_dir() / "com.neuhelper.gate.plist"
+    return autostart_dir() / (AUTOSTART_NAME + ".lnk")
+
+
+def autostart_on() -> bool:
+    return autostart_path().is_file()
+
+
+_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+"http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.neuhelper.gate</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>{gate}</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+"""
+
+
+def set_autostart(here: Path, on: bool) -> bool:
+    """开 / 关开机自启。返回操作之后的**实际**状态,不是你要求的那个。
+
+    **两个平台指的都是「闸门」而不是应用本身。** 闸门每天只放行一次
+    (startup-gate.vbs / startup-gate.sh),否则每次登录、每次重启都弹一个窗口。
+
+    Windows 上造 .lnk 走的是 WScript.Shell:纯 Python 拼 IShellLink 的 COM
+    调用又长又脆,而 PowerShell 是系统自带的 —— install.ps1 建这个快捷方式用的
+    也正是同一段,两边行为一致。
+    """
+    target = autostart_path()
+    if not on:
+        try:
+            target.unlink()
+        except (FileNotFoundError, OSError):
+            pass
+        return autostart_on()
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if platform_id.IS_MAC:
+        gate = here / "startup-gate.sh"
+        target.write_text(_PLIST.format(gate=gate), encoding="utf-8")
+        try:
+            subprocess.run(["launchctl", "load", "-w", str(target)],
+                           capture_output=True, timeout=15)
+        except Exception:                          # noqa: BLE001
+            pass
+        return autostart_on()
+
+    gate = here / "startup-gate.vbs"
+    icon = here / "gui" / "icon.ico"
+    ps = ";".join([
+        "$w = New-Object -ComObject WScript.Shell",
+        "$s = $w.CreateShortcut('" + str(target) + "')",
+        "$s.TargetPath = Join-Path $env:SystemRoot 'System32\\wscript.exe'",
+        "$s.Arguments = '\"" + str(gate) + "\"'",
+        "$s.WorkingDirectory = '" + str(here) + "'",
+        "$s.Description = 'Open the Canvas study assistant at logon'",
+        "$s.IconLocation = '" + str(icon) + ",0'",
+        "$s.WindowStyle = 7",
+        "$s.Save()",
+    ])
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-Command", ps],
+            capture_output=True, timeout=30, creationflags=NO_WINDOW)
+    except Exception:                              # noqa: BLE001
+        pass
+    return autostart_on()
+
+
 def acquire_single_instance(name: str = "NEUHelper") -> bool:
     """抢到"我是唯一的那个实例"吗?抢到返回 True。
 
@@ -132,6 +214,16 @@ def acquire_single_instance(name: str = "NEUHelper") -> bool:
         # Local\ 前缀 = 只在当前登录会话内唯一
         h = k32.CreateMutexW(None, False, f"Local\\{name}Singleton")
         if h and k32.GetLastError() == 183:        # ERROR_ALREADY_EXISTS
+            # **拿不到也得把句柄关掉。** CreateMutexW 在"已存在"时照样返回一个
+            # **有效句柄**(指向同一个互斥体),不关就等于自己给它续命。
+            #
+            # 平时无所谓 —— 判完马上就退了。但 `--after-update` 那条路是**循环
+            # 重试**的:第一次失败漏一个句柄,之后哪怕旧进程早退干净了,互斥体
+            # 也被自己漏出来的那个句柄撑着,于是**每一次重试都必然失败**,
+            # 等满 20 秒放弃。用户看到的就是"点了更新并重启,应用没了"。
+            #
+            # 双进程量过:不关句柄等满 10 秒拿不到,关了 3.1 秒就拿到。
+            k32.CloseHandle(ctypes.c_void_p(h))
             return False
         _keep = h
         return True

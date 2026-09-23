@@ -5137,8 +5137,21 @@ function closePrefs() {
   $('prefsBackdrop').hidden = true;
 }
 
+/* 开机自启的开关。**每次都现问后端**,不缓存在 prefs 里 —— 这件事的真相在
+   操作系统那边(启动文件夹里的那个快捷方式),用户可能自己去删掉。 */
+async function syncAutostart() {
+  const b = $('swAutostart');
+  if (!b) return;
+  try {
+    const d = await apiGet('/api/autostart');
+    b.setAttribute('aria-checked', String(!!d.on));
+    b.title = d.path || '';
+  } catch (e) { /* 拿不到就保持现状,别把开关摆成误导性的状态 */ }
+}
+
 function syncPrefsUI() {
   const p = state.prefs;
+  syncAutostart();
   const theme = p.theme || 'auto';
   document.querySelectorAll('#segTheme .seg-btn').forEach((b) => {
     b.classList.toggle('is-on', b.dataset.v === theme);
@@ -5858,6 +5871,25 @@ function wirePrefs() {
   });
   $('btnOpenStartup').addEventListener('click', () => {
     apiPost('/api/reveal', { what: 'startup' }).catch(() => {});
+  });
+
+  // 开机自启。**按后端回的实际状态摆**,不是按点击意图摆 —— 建快捷方式可能
+  // 失败(启动文件夹被组策略锁了之类),那时候开关就该弹回去,而不是显示成
+  // "开着"骗人
+  $('swAutostart').addEventListener('click', async () => {
+    const b = $('swAutostart');
+    const want = b.getAttribute('aria-checked') !== 'true';
+    b.disabled = true;
+    try {
+      const r = await apiPost('/api/autostart', { on: want });
+      b.setAttribute('aria-checked', String(!!r.on));
+      b.title = r.path || '';
+      if (r.ok === false) hint(want ? '没能加上开机项' : '没能去掉开机项');
+    } catch (e) {
+      hint('改不了开机项');
+    } finally {
+      b.disabled = false;
+    }
   });
 }
 

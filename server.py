@@ -3097,6 +3097,26 @@ def api_file_reveal():
     return jsonify({"ok": True, "opened": str(target)})
 
 
+@app.get("/api/autostart")
+def api_autostart_get():
+    return jsonify({"on": desktop.autostart_on(),
+                    "path": str(desktop.autostart_path())})
+
+
+@app.post("/api/autostart")
+def api_autostart_set():
+    """开 / 关开机自启。
+
+    **不进 prefs.json。** 这件事的真相在操作系统那边(启动文件夹里的快捷方式、
+    LaunchAgent 的 plist)—— 用户可能直接去那儿删掉,也可能装机脚本刚建好。
+    在偏好里再存一份布尔值只会和现实打架,所以每次都现问。
+    """
+    want = bool((request.get_json(silent=True) or {}).get("on"))
+    got = desktop.set_autostart(HERE, want)
+    return jsonify({"ok": got == want, "on": got,
+                    "path": str(desktop.autostart_path())})
+
+
 @app.post("/api/reveal")
 def api_reveal():
     """在资源管理器里打开某个目录。**只认白名单**,不接受前端传路径 ——

@@ -439,6 +439,12 @@ const EN = {
   '对话框保持在最前': 'Keep the chat window on top',
   '只管对话框那一态;要所有形态都置顶,用标题栏的 📌':
     'Only the chat shape. For every shape, use the pin in the title bar',
+  '开机自动打开': 'Open at login',
+  '登录时自动开一次。闸门每天只放行一次,重启几遍也只会弹一个窗口':
+    'Opens once when you log in. The gate lets it through once a day, so restarting a few times still gives you one window',
+  '没能加上开机项': 'Could not add the login item',
+  '没能去掉开机项': 'Could not remove the login item',
+  '改不了开机项': 'Could not change the login item',
   '打开数据目录': 'Open the data folder',
   '打开启动文件夹': 'Open the startup folder',
 
