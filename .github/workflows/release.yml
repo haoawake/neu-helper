@@ -154,40 +154,24 @@ jobs:
       - name: what we are going to attach
         run: find dl -name '*.zip' -printf '%p  %s bytes\n'
 
-      # Hand-written release notes live in packaging/notes/<tag>.md. They matter
-      # more than they look: updater.py pulls the release body into the app and
-      # shows it behind the "what changed" button, so an empty body means the
-      # user who just updated is told nothing.
+      # 发布说明的**唯一来源是 packaging/release_descriptions.json**
+      # ——sync-release-descriptions.yml 用的也是它。
       #
-      # First line of the file is the release title (drop the leading "# ").
-      # No file -> fall back to the auto-generated changelog, which is better
-      # than nothing but should be the exception.
+      # 两个工作流都会写 Release 的 name/body。各读各的数据源就会互相覆盖,
+      # 而且谁赢取决于谁后跑(打 tag 时这个先跑;改了 JSON 推 main 时那个后跑)。
+      # 所以这里也读 JSON,两边永远一致。
+      #
+      # JSON 里没有这个 tag 时退回 packaging/notes/<tag>.md(早期版本用的
+      # 是那套)。两处都没有就只留一个 changelog 链接 —— 那是最差情况:
+      # updater.py 会把 Release 正文取进应用里给用户看,空正文等于刚更新完
+      # 的人什么也没被告知。
       - name: read the release notes
         id: notes
         run: |
-          # **写进工作区,不要写 /tmp。** 历史原因:这一步原来跑在 Windows
-          # runner 上,那儿 bash 看到的 /tmp 是 Git Bash 自己那套 MSYS 路径,
-          # 而读它的 action 是 Node 写的、按普通 Windows 路径解释 —— 文件
-          # "明明写出来了"却读不到,于是悄悄退回自动 changelog(所有步骤还都是
-          # 绿的)。现在搬到了 ubuntu,这个坑没了,但相对路径依然是对的写法。
-          f="packaging/notes/${GITHUB_REF_NAME}.md"
-          if [ -f "$f" ]; then
-            title=$(head -1 "$f" | sed 's/^#* *//')
-            tail -n +2 "$f" > release-body.md
-            echo "found notes: $f"
-          else
-            echo "::warning::no $f - the release will go out with only a changelog link"
-            title="${GITHUB_REF_NAME}"
-            : > release-body.md
-          fi
-          # 自己拼 compare 链接,不用 generate_release_notes —— 那个开关在"更新
-          # 已存在的 Release"这条路上会把正文整个换掉,正是上面要避免的事
-          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
-          if [ -n "$prev" ]; then
-            printf '\n---\n\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
-              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$GITHUB_REF_NAME" >> release-body.md
-          fi
+          python packaging/pick_release_notes.py
+          title=$(cat release-title.txt)
           echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "title: $title"
           echo "body is $(wc -c < release-body.md) bytes"
 
       # 用预装的 gh,不用第三方 action。
