@@ -977,12 +977,24 @@ class Backend:
     def toast_clicked(self) -> None:
         """点了右下角那条弹窗。
 
-        把窗口叫回上次那个形态(原来就是这个行为),外加**跳到该看的地方**
-        —— 更新提醒弹出来、点一下却只是把窗口叫回来、横幅还在另一个子页面上,
-        那这条弹窗就白弹了。
+        两件事:让窗口看得见,外加**跳到该看的地方** —— 更新提醒弹出来、
+        点一下却只是把窗口叫回来、横幅还在另一个子页面上,那这条弹窗就白弹了。
+
+        **"看得见"不等于"换形态"。** 原来这儿无条件 `apply_mode(restore_mode())`,
+        而 restoreMode 记的是"点悬浮球该还原成哪个形态"(默认 chat)。窗口本来
+        开着完整面板的时候点一条弹窗,它会被硬切成小对话框 —— 用户报的就是
+        "点了右下角的弹窗,立刻给我缩小了"。
+        那个还原只在**收成球**(窗口是隐藏的)时才有意义;窗口已经在眼前,
+        该做的只是把它抬到前面,尺寸一个像素都不该动。
         """
         try:
-            apply_mode(restore_mode())
+            collapsed = orb is not None and orb.visible()
+            if collapsed:
+                apply_mode(restore_mode())
+            else:
+                h = _hwnd()
+                if h:
+                    native_window.show(h)
         except Exception:                          # noqa: BLE001
             pass
         go, self._toast_go = self._toast_go, ""
