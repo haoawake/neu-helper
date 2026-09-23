@@ -80,6 +80,7 @@ import orb_window  # noqa: E402
 import platform_id  # noqa: E402
 import server  # noqa: E402
 import toast  # noqa: E402
+import tray  # noqa: E402
 
 TITLE = "NEU Helper"
 
@@ -143,6 +144,10 @@ def setup_orb() -> None:
         log(f"窗口图标已挂上({ico.name})")
 
     prefs = server.read_prefs()
+    # **先拨主题,再建球。** 球在构造函数里就把所有帧画好了,而换主题不会
+    # 让 set_look 认为"有东西变了" —— 顺序错一步,开机看到的永远是默认配色
+    # (用户报的就是"重启之后球又回到原来的样子,除非改一次直径")
+    server.sync_art_theme()
     try:
         o = orb_window.OrbWindow(
             # 单击 = 还原成收起来之前那个形态(从大窗口收的就还原成大窗口);
@@ -180,6 +185,28 @@ def setup_orb() -> None:
         log(f"信息弹窗就绪 hwnd={server.backend.toast.hwnd}")
     except Exception:
         log("信息弹窗没装上:" + chr(10) + traceback.format_exc(limit=3))
+    # 任务栏通知区(macOS 是菜单栏)那个小图标。
+    #
+    # **它是收成悬浮球之后唯一稳定的出路。** 球被拖到屏幕边上、或者手快连点
+    # 两下收进了角落时,主窗口是完全隐藏的 —— 没有这个图标就只剩任务管理器。
+    # 所以装不上也只记一行日志,绝不让它挡住启动。
+    try:
+        ico = desktop.app_icon(server.GUI)
+        server.backend.tray = tray.Tray(
+            # 左键 = 还原成收起来之前那个形态,和点悬浮球一致
+            on_open=lambda: server.apply_mode(server.restore_mode()),
+            on_expand=lambda: server.apply_mode("full"),
+            on_orb=lambda: server.apply_mode("orb"),
+            # 退出走的是关主窗口那条正路 —— 和标题栏的 ✕、球右键的「退出」
+            # 同一个出口,收尾(摘图标、存偏好)都在那条路上
+            on_quit=lambda: native_window.close(h),
+            icon_path=str(ico) if ico else "",
+            tip=TITLE,
+            labels=server.tray_labels(),
+        )
+        log("托盘图标就绪")
+    except Exception:
+        log("托盘图标没装上:" + chr(10) + traceback.format_exc(limit=3))
 
 
 def already_running(after_update: bool = False) -> bool:
@@ -330,6 +357,14 @@ def main() -> int:
     )
 
     webview.start(debug=False)
+    # **托盘图标一定要主动摘掉。** 不摘的话通知区会留一个点不动的"幽灵
+    # 图标",一直挂到用户把鼠标划过去、系统才发现那个进程早没了。
+    # 放在 webview.start() 之后 = 窗口关了、马上就走这一步
+    if server.backend.tray is not None:
+        try:
+            server.backend.tray.close()
+        except Exception:                          # noqa: BLE001
+            pass
     log("窗口已关闭,退出")
     return 0
 

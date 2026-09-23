@@ -298,6 +298,7 @@ class Backend:
         self._seen_items: set[str] | None = None
 
         # ── 更新
+        self.tray = None                     # 托盘/菜单栏图标,app.py 装上来
         self.update_info: dict = {}          # 上一次 check() 的结果
         # 上一次点的更新有没有落地。**启动时立刻核对一次** —— 换文件的是
         # 另一个进程,它成功与否发起方永远看不到(那时候它已经退了),
@@ -2316,6 +2317,12 @@ def api_prefs_set():
     theme_changed = orb_render.set_theme(d.get("theme"))
     toast_render.set_theme(d.get("theme"))
     applang.set_lang(d.get("lang"))
+    # 托盘那个菜单是原生的,切了语言得自己换一遍文案
+    if backend.tray is not None:
+        try:
+            backend.tray.set_labels(tray_labels())
+        except Exception:                      # noqa: BLE001
+            pass                               # 菜单没换成不该挡住保存设置
     if backend.toast is not None:
         # dark 是个普通属性,下一条弹窗就跟着走(toast.py 的接口说明里写着)
         backend.toast.dark = dark_mode()
@@ -2349,19 +2356,50 @@ orb = None
 _hwnd_cache = 0
 
 
-def attach_orb(o) -> None:
-    """app.py 在窗口出来之后把球装上来。
+def tray_labels() -> dict:
+    """托盘右键菜单的文案。
 
-    顺手把**两个自绘件**(悬浮球、右下角弹窗)的配色拨到当前主题 —— 不然选了
-    NEU 的人每次开机都会先看到一颗蓝球、一道蓝杠,直到他去动一次设置
-    (set_theme 原本只在 /api/prefs 那条路上调)。弹窗是紧接着这一步才建的,
-    而 THEME 是模块级的、出图那一刻才读,所以先后无所谓。
+    **必须在 Python 这边分中英。** 那是个原生菜单,不是网页 ——
+    gui/i18n.js 的 MutationObserver 够不着它。同 applang.tr 的另外两处
+    (右下角弹窗、更新器里带路径的报错)。
     """
+    return {
+        "open": applang.tr("打开 NEU Helper", "Open NEU Helper"),
+        "expand": applang.tr("展开完整面板", "Expand the full panel"),
+        "orb": applang.tr("收成悬浮球", "Collapse to the orb"),
+        "quit": applang.tr("退出 NEU Helper", "Quit NEU Helper"),
+    }
+
+
+def sync_art_theme() -> bool:
+    """把**两个自绘件**(悬浮球、右下角弹窗)的配色拨到当前主题。
+    返回球的配色有没有真的变。
+
+    球和弹窗是自己画位图的,读不到 CSS —— 主题得单独告诉它们一声。
+
+    **必须在建球之前调。** 球是在构造函数里就把所有帧画好的(弹出/收起的
+    缩放帧、光晕的相位帧,默认尺寸下四十来张),而 `set_look` 只在
+    直径/深浅/缩放/动画开关变了的时候才重画 —— 那四样一个都不会因为换主题
+    而变。所以顺序错一步,结果就是:**开机永远是默认那颗蓝球,直到你去动一下
+    直径**。这正是用户报的现象。
+
+    弹窗没这个问题:它是出图那一刻才读模块级的 THEME,先后无所谓。
+    """
+    theme = read_prefs().get("theme")
+    changed = orb_render.set_theme(theme)
+    toast_render.set_theme(theme)
+    return changed
+
+
+def attach_orb(o) -> None:
+    """app.py 在窗口出来之后把球装上来。"""
     global orb
     orb = o
-    theme = read_prefs().get("theme")
-    orb_render.set_theme(theme)
-    toast_render.set_theme(theme)
+    # 兜底:正常路径上 app.py 已经在建球之前调过 sync_art_theme(),
+    # 这里的 set_theme 返回 False、不会白画一遍。漏调了的话这一下把它救回来
+    # —— 代价只是多渲染一次(约 350ms,在球自己的线程上)
+    if sync_art_theme():
+        o.set_look(force=True)
 
 
 def _hwnd() -> int:

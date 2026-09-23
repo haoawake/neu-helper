@@ -323,7 +323,8 @@ def _dispatch_parity():
 
     pairs = [("native_win32.py", "native_cocoa.py"),
              ("orb_win32.py", "orb_cocoa.py"),
-             ("toast_win32.py", "toast_cocoa.py")]
+             ("toast_win32.py", "toast_cocoa.py"),
+             ("tray_win32.py", "tray_cocoa.py")]
 
     def sigs(path):
         tree = ast.parse((HERE / path).read_text(encoding="utf-8"))
@@ -383,6 +384,9 @@ print(f"""
   4. 鼠标移到球上 -> 会变大变亮;停一秒 -> 弹出备忘录窄栏
   5. 拖动球 -> 跟手,松手后位置被记住(下次从那儿弹出来)
   6. 球上右键 -> 菜单能弹,"展开面板"和"退出"都管用
+  6b. 任务栏右下角(macOS 是菜单栏右侧)有个小图标 -> 左键叫回窗口、
+      右键弹菜单、"退出"一下就退干净。**退出之后那个图标要立刻消失**
+      (留着不动的是幽灵图标,说明没摘)
   7. 设置 -> 通用 -> 信息弹窗 -> 「试一条」-> 右下角弹出来,**文字看得清**、
      底部阴影是柔和化开的(不是一块方影),深色模式下是深卡片浅字
   8. 重启一次 -> 登录后自动开一次(同一天再登录不重复开)
