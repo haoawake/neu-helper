@@ -117,31 +117,50 @@ def paint_card(buf, w: int, h: int, scale: float, dark: bool) -> bytearray:
     mar = int(SHADOW_MARGIN * s)
     base, _tcol, _bcol, sh_a = colors(dark)   # 文字色是宿主的事,这里只要底色
     acc = accent(dark)
-    r = int(12 * s)
     bar = int(4 * s)
     x0, y0 = mar, mar
     x1, y1 = w - mar, h - mar
-    spread = max(2.0, mar * 0.38)
-    drop = mar * 0.22                     # 阴影往下偏一点,卡片才像"浮"着
+    # **像素档:方角 + 硬投影 + 一圈黑边。** 圆角和柔光正是这套画风的反面 ——
+    # 界面那边已经全换过去了(见 app.css),右下角这张卡片不跟上就很割裂。
+    # 硬投影靠 drop 拉大、spread 压到极小做出来:指数衰减在很短的距离内掉到 0,
+    # 出来就接近一块实心的偏移块
+    pixel = THEME == "pixel"
+    r = 0 if pixel else int(12 * s)
+    edge = int(2 * s) if pixel else 0     # 描边宽度,0 = 不描
+    spread = max(0.6, mar * 0.06) if pixel else max(2.0, mar * 0.38)
+    drop = mar * 0.55 if pixel else mar * 0.22   # 阴影往下偏一点,卡片才像"浮"着
+    shift = mar * 0.45 if pixel else 0.0         # 像素档的投影还往右偏
     # alpha 遮罩留一份:宿主写完字要靠它把 alpha 补回来
     mask = bytearray(w * h)
     for y in range(h):
         for x in range(w):
-            # 圆角矩形的符号距离:负数在里面
-            dx = max(x0 + r - x, 0, x - (x1 - 1 - r))
-            dy = max(y0 + r - y, 0, y - (y1 - 1 - r))
-            d = (dx * dx + dy * dy) ** 0.5 - r
+            # 圆角矩形的符号距离:负数在里面。
+            #
+            # **不能写成 `max(..., 0)` 再减 r。** 那个式子在矩形内部恒等于 -r,
+            # 靠"r 一定大于 1"才让 `d <= -1` 成立 —— 圆角一归零(像素档)内部
+            # 就全是 0,整张卡片一个像素都画不出来,只剩一块投影。踩过。
+            # 下面是标准写法:内部给的是到最近边的真实距离,r=0 照样对。
+            qx = max(x0 + r - x, x - (x1 - 1 - r))
+            qy = max(y0 + r - y, y - (y1 - 1 - r))
+            d = (min(max(qx, qy), 0.0)
+                 + (max(qx, 0.0) ** 2 + max(qy, 0.0) ** 2) ** 0.5 - r)
             o = (y * w + x) * 4
             if d <= -1.0:                          # 卡片内部:完全不透明
                 a = 255
-                px = _rgba(*base, 255) if x >= x0 + bar else _rgba(*acc, 255)
+                if x >= x0 + bar:
+                    # 像素档沿着卡片内缘描一圈墨色,轮廓感全靠它
+                    px = (_rgba(*_tcol, 255) if (pixel and d > -edge)
+                          else _rgba(*base, 255))
+                else:
+                    px = _rgba(*acc, 255)
             elif d <= 0.0:                         # 圆角上的抗锯齿
                 a = int(255 * (-d))
                 px = _rgba(*base, a)
             else:                                  # 外面:阴影
-                dys = max(y0 + r - (y - drop), 0,
-                          (y - drop) - (y1 - 1 - r))
-                ds = (dx * dx + dys * dys) ** 0.5 - r
+                sxq = max(x0 + r - (x - shift), (x - shift) - (x1 - 1 - r))
+                syq = max(y0 + r - (y - drop), (y - drop) - (y1 - 1 - r))
+                ds = (min(max(sxq, syq), 0.0)
+                      + (max(sxq, 0.0) ** 2 + max(syq, 0.0) ** 2) ** 0.5 - r)
                 # 指数衰减到位图边界时还剩 6% 左右,直接截断就是一圈方角
                 # (这一坑和悬浮球的投影是同一个)。再乘一个到边界正好归零
                 # 的平滑窗,外圈就真的化掉了

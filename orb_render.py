@@ -112,10 +112,20 @@ PALETTES = {"neu": NEU, "beach": BEACH, "pixel": PIXEL}
 THEME = ""
 
 
-def set_theme(name: str | None) -> None:
-    """拨到某一档配色。认不出的名字一律回到"按深浅选"。"""
+def set_theme(name: str | None) -> bool:
+    """拨到某一档配色。认不出的名字一律回到"按深浅选"。
+
+    **返回"这一下有没有真的换"** —— 宿主那边的 set_look 只在直径/深浅/缩放/
+    动画变了的时候才重画,换主题这几样一样都不变。不把"换了"这件事告诉它,
+    球就一直用着上次那张位图:窗口开着的时候球是隐藏的、动画定时器也不转,
+    等你收成球,看到的还是换主题之前那颗。
+    """
     global THEME
-    THEME = name if name in PALETTES else ""
+    want = name if name in PALETTES else ""
+    if want == THEME:
+        return False
+    THEME = want
+    return True
 
 
 def palette(dark: bool) -> dict:

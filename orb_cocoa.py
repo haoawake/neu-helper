@@ -580,8 +580,11 @@ class OrbWindow:
         native_cocoa._main(go)
 
     def set_look(self, diameter: int | None = None, dark: bool | None = None,
-                 scale: float | None = None, animate: bool | None = None) -> None:
-        changed = False
+                 scale: float | None = None, animate: bool | None = None,
+                 force: bool = False) -> None:
+        # force:外面有东西变了而这儿看不见 —— 目前只有换主题(配色在
+        # orb_render 那个模块级开关里,这里的四个参数一个都不会动)
+        changed = bool(force)
         if diameter and diameter != self.logical_d:
             self.logical_d, changed = diameter, True
         if dark is not None and dark != self.dark:

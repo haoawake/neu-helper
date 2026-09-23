@@ -2238,15 +2238,16 @@ def api_prefs_set():
     d = write_prefs(request.get_json(silent=True) or {})
     # 悬浮球的外观/大小、整窗透明度都归设置管,改完立刻生效
     # 球和右下角那个弹窗都是自绘的,读不到 CSS —— 主题得单独告诉它们一声
-    orb_render.set_theme(d.get("theme"))
+    theme_changed = orb_render.set_theme(d.get("theme"))
     toast_render.set_theme(d.get("theme"))
     applang.set_lang(d.get("lang"))
     if backend.toast is not None:
         # dark 是个普通属性,下一条弹窗就跟着走(toast.py 的接口说明里写着)
         backend.toast.dark = dark_mode()
     if orb:
+        # force=换过主题:那四个参数一个都不会变,不强制的话球不会重画
         orb.set_look(diameter=int(d["orbSize"]), dark=dark_mode(),
-                     animate=bool(d.get("anim", True)))
+                     animate=bool(d.get("anim", True)), force=theme_changed)
     h = _hwnd()
     if h:
         native_window.set_window_alpha(h, float(d["opacity"]))
@@ -2385,9 +2386,9 @@ def apply_mode(mode: str) -> dict:
         if ox is None or oy is None:
             # 没拖过就落在窗口右下角那一块
             ox, oy = right - orb.size, bottom - orb.size
-        orb_render.set_theme(prefs.get("theme"))
+        tch = orb_render.set_theme(prefs.get("theme"))
         toast_render.set_theme(prefs.get("theme"))
-        orb.set_look(diameter=int(prefs["orbSize"]), dark=dark_mode(),
+        orb.set_look(force=tch, diameter=int(prefs["orbSize"]), dark=dark_mode(),
                      # render_scale 而不是 dpi_scale:球要的是"一个窗口单位
                      # 画几个位图像素"。Windows 上两者相等,macOS 上不等
                      scale=native_window.render_scale(h),
