@@ -995,6 +995,16 @@ class Backend:
                 h = _hwnd()
                 if h:
                     native_window.show(h)
+                    # **show() 之后必须把置顶再定一次。** 它为了保证窗口能露头
+                    # 会蹭一下 HWND_TOPMOST,而那一下是不撤的 —— 不补这句,
+                    # 完整面板从此一直压在所有窗口上面,要手动缩一次才恢复
+                    # (用户报的就是这个)。apply_mode 那条路早有同样的补丁,
+                    # 注释就写在 grow() 里,我这条新路忘了抄。
+                    prefs = read_prefs()
+                    mode = prefs.get("mode")
+                    native_window.set_topmost(
+                        h, want_topmost(mode if mode in WINDOW_MODES else "full",
+                                        prefs))
         except Exception:                          # noqa: BLE001
             pass
         go, self._toast_go = self._toast_go, ""
