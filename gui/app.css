@@ -863,6 +863,26 @@ body.is-morphing .layout {
 body.is-memopeek .titlebar,
 body.is-memopeek .stage,
 body.is-memopeek .sheet-backdrop { display: none !important; }
+
+/* 浮窗自己的标题条。整条 .titlebar 在这一态是藏起来的,拖拽区和关闭按钮
+   都在那上面 —— 不补一条的话浮窗既拖不动也关不掉(而"关不掉"是真的关不掉:
+   在里面点过一下它就成了前台窗口,自动收起那套判定从此认定你还在用它)。 */
+.memo-peekbar { display: none; }
+body.is-memopeek .memo-peekbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 4px 0 12px;
+}
+.memo-peekdrag {
+  flex: 1 1 auto;
+  padding: 5px 0;
+  font-size: 11px; font-weight: 650; letter-spacing: .06em;
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none; -webkit-user-select: none;
+}
+.memo-peekdrag:active { cursor: grabbing; }
+
 body.is-memopeek #panelMemo {
   display: flex !important;
   position: fixed; inset: 8px;
@@ -2834,32 +2854,6 @@ body.no-anim .upd-bar.is-flash { animation: none; }
    横向的小时网格线画在 .wk-body 的背景上(repeating gradient),不是 168 个
    div —— 那条「现在」的线每 30 秒重画一次整个网格,节点越少越好。 */
 
-.week-entry {
-  display: flex; align-items: center; gap: 10px;
-  width: 100%; padding: 9px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--glass-2);
-  border: 1px solid var(--glass-edge-low);
-  box-shadow: inset 0 1px 0 var(--glass-edge);
-  font: inherit; font-size: 12.5px;
-  color: var(--text-secondary);
-  cursor: pointer; text-align: left;
-  transition: transform var(--dur-fast) var(--ease),
-              background-color var(--dur-fast) var(--ease);
-}
-.week-entry:hover { background: var(--glass-hover); transform: translateY(-1px); }
-.week-entry:active { transform: scale(.99); }
-.week-entry-k {
-  flex: 0 0 auto; padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--accent-wash); color: var(--accent-ink);
-  font-size: 11px; font-weight: 650;
-}
-.week-entry-v {
-  flex: 1 1 auto; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.week-entry-go { flex: 0 0 auto; color: var(--text-muted); }
 
 .week-nav {
   display: flex; align-items: center; gap: 6px;

@@ -1794,7 +1794,6 @@ async function loadWeek() {
   }
   $('weekBanner').hidden = true;
   renderWeek();
-  renderWeekEntry();
 }
 
 /* 纵轴范围。默认贴着内容走,上下各留一小时余量;「全天」是 0–24。
@@ -2107,61 +2106,6 @@ async function restoreWk(ids) {
   await loadWeek();
 }
 
-/* 仪表盘上那一行:今天接下来还有什么。**不点进去也有用**,所以它不只是个
-   按钮 —— 今天没课就说明天,明天也没有就说这周几条。 */
-function renderWeekEntry() {
-  const box = $('weekEntryText');
-  if (!box) return;
-  const d = state.week;
-  if (!d) { box.textContent = '还没读取'; return; }
-  // 备忘不算(那是另一列的事),但**邮件日程要算** —— 今天下午三点的面试
-  // 正是这一行该说的东西
-  const items = (d.items || []).filter(
-    (x) => !x.memo && (state.prefs.schedMail !== false || !x.mail));
-  const today = wkYmd(new Date());
-  const adToday = (d.allday || []).filter(
-    (x) => x.date === today && state.prefs.schedMail !== false);
-  if (!items.length && !adToday.length) {
-    box.textContent = '还没解析过 —— 点进去抽一次';
-    return;
-  }
-  // 今天有全天的事(交表截止之类)就挂在后面一句 —— 它没有时刻,排不进
-  // "接下来",但漏掉它这行就在说谎
-  const tail = adToday.length
-    ? ` · 今天还有「${adToday[0].title}」${adToday.length > 1 ? ` 等 ${adToday.length} 件` : ''}`
-    : '';
-  const say = (t) => { box.textContent = t + tail; };
-  const now = new Date();
-  const wd = now.getDay();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const live = items.find(
-    (x) => x.weekday === wd && wkMins(x.start) <= nowMin && nowMin < wkMins(x.end));
-  if (live) {
-    say(`正在进行 · ${live.title} 到 ${live.end}`
-      + (live.place ? ` · ${live.place}` : ''));
-    return;
-  }
-  const next = items
-    .filter((x) => x.weekday === wd && wkMins(x.start) > nowMin)
-    .sort((a, b) => wkMins(a.start) - wkMins(b.start))[0];
-  if (next) {
-    say(`今天 ${next.start} ${next.title}`
-      + (next.place ? ` · ${next.place}` : ''));
-    return;
-  }
-  // 今天没有了 —— 往后找最近的一天
-  for (let k = 1; k <= 7; k += 1) {
-    const day = (wd + k) % 7;
-    const list = items.filter((x) => x.weekday === day)
-      .sort((a, b) => wkMins(a.start) - wkMins(b.start));
-    if (list.length) {
-      say(`${k === 1 ? '明天' : WK_CN[day]} ${list[0].start} ${list[0].title}`);
-      return;
-    }
-  }
-  say(items.length ? `本周 ${items.length} 项` : '今天没有固定日程');
-}
-
 /* ── 改一条 / 加一条 ──
    自动抽出来的条目改的是覆盖层(后端 edits),重新解析不会冲掉;
    手加的条目是真改真删。前端只看 id 前缀:u 开头是手加的。 */
@@ -2301,7 +2245,6 @@ function renderSchedState(st) {
 }
 
 function wireWeek() {
-  $('btnWeek').addEventListener('click', openWeek);
   $('btnWeekBack').addEventListener('click', closeWeek);
   $('btnWeekPrev').addEventListener('click', () => wkShift(-7));
   $('btnWeekNext').addEventListener('click', () => wkShift(7));
@@ -4564,6 +4507,27 @@ async function setMode(mode) {
    收成球之后**不摘**这个 class —— 窗口是隐藏的,内容留在淡掉的状态,
    下次展开时先长出一个空壳、动画结束再淡入,中间不会闪一帧错位的布局。 */
 let morphTimer = 0;
+let layoutTimer = 0;
+let pendingLayout = '';
+
+/* 换 data-mode = 整页重排(完整面板三栏 ↔ 对话框一栏)。**必须等内容淡掉之后
+   再换。**
+
+   这是"顺序反了"那个毛病的第二个入口 —— 背景层那次(见 app.css 里 is-orbing
+   的长注释)修的是覆盖层,这次是布局本身:在满尺寸的窗口上先把三栏重排成一栏,
+   再开始缩,人眼读到的是"整个屏幕先变了一次,然后才缩小"。窗口还没动,画面
+   已经天翻地覆。
+
+   所以延到 120ms —— 比 is-morphing 那 110ms 的淡出多一点点,重排发生时内容
+   已经是透明的,谁也看不见。关了动画的话没有淡出这回事,立刻换。 */
+function flushLayout() {
+  clearTimeout(layoutTimer);
+  layoutTimer = 0;
+  if (pendingLayout) {
+    document.body.dataset.mode = pendingLayout;
+    pendingLayout = '';
+  }
+}
 
 function applyModeClass(mode) {
   const changing = state.mode !== mode;
@@ -4572,12 +4536,21 @@ function applyModeClass(mode) {
   // 放在"形态没变就返回"**前面**:启动时那次 setMode 是同态的,
   // 但按钮的图标还没摆对
   syncSizeBtn(mode);
-  // 收成球时页面提前排成 chat 布局:窗口此刻是隐藏的,等下点球弹出来就是现成的
-  document.body.dataset.mode = mode === 'orb' ? 'chat' : mode;
+  // 收成球时页面排成 chat 布局:窗口那会儿是隐藏的,等下点球弹出来就是现成的
+  const layout = mode === 'orb' ? 'chat' : mode;
   // 形态没变就什么都不用做 —— 启动时那次 setMode 也走这里,
   // 不拦住的话界面会先白一下再回来
-  if (!changing) return;
+  if (!changing) {
+    pendingLayout = layout;
+    flushLayout();
+    return;
+  }
   document.body.classList.add('is-morphing');
+  pendingLayout = layout;
+  clearTimeout(layoutTimer);
+  if (document.body.dataset.mode === layout
+      || document.body.classList.contains('no-anim')) flushLayout();
+  else layoutTimer = setTimeout(flushLayout, 120);
   // 收球 / 展开两个方向上页面都要画成球的样子(那 130ms 是两个窗口交叉淡化,
   // 画得越像越看不出换了个窗口),但时机相反:
   //   收 → 延迟 300ms 淡入(先缩小,小了才变成球)
@@ -4589,6 +4562,8 @@ function applyModeClass(mode) {
   clearTimeout(morphTimer);
   // 和后端的时长对齐:收起 110+340+130ms;展开 90+130+340ms
   morphTimer = setTimeout(() => {
+    // 兜底:隐藏的窗口里 setTimeout 会被节流,内容淡回来之前布局必须已经排好
+    flushLayout();
     document.body.classList.remove('is-morphing');
     document.body.classList.remove('is-unorbing');
   }, toOrb ? 8000 : 580);
@@ -4667,6 +4642,7 @@ function wireVisibilitySync() {
       if (st && st.mode && st.mode !== state.mode) applyModeClass(st.mode);
       // 兜底:窗口都看得见了,内容不能还是淡掉的
       clearTimeout(morphTimer);
+      flushLayout();
       document.body.classList.remove('is-morphing');
     } catch (e) { /* 对不上账就算了,下次再说 */ }
   });
@@ -4761,6 +4737,11 @@ function wireDragRegions() {
       if (!dragging) {
         dragging = true;
         follow = null;
+        // 浮窗被拖走 = "我要它待在这儿"。不钉住的话松手挪开指针,
+        // 600ms 后它自己就没了 —— 那这一拖等于白拖
+        if (document.body.classList.contains('is-memopeek')) {
+          apiPost('/api/window/peek/pin', { on: true }).catch(() => {});
+        }
         apiPost('/api/window/drag/start')
           .then((r) => { follow = !!(r && r.follow); })
           .catch(() => { follow = false; });
@@ -5015,6 +4996,10 @@ function wireMemo() {
   $('btnMemoAdd').addEventListener('click',
     () => openMemoForm($('memoForm').hidden));
   $('btnMemoCancel').addEventListener('click', () => openMemoForm(false));
+  // 浮窗那一态的收起按钮。**只能走后端** —— 那一态整扇主窗口就是浮窗,
+  // 页面这边摘掉 class 只会露出底下的完整界面,窗口还杵在那儿
+  $('btnMemoPeekClose').addEventListener('click',
+    () => { apiPost('/api/window/peek/off').catch(() => {}); });
   $('memoForm').addEventListener('submit', submitMemo);
   $('memoKind').addEventListener('change', syncMemoForm);
 
@@ -5813,7 +5798,6 @@ function wirePrefs() {
   // 画不画是纯显示问题,原地重画就行 —— 日程本身早抽好了
   toggle('swSchedMail', 'schedMail', () => {
     if (!$('weekView').hidden) renderWeek();
-    renderWeekEntry();
   });
   $('btnSchedParse').addEventListener('click', async () => {
     $('schedPrefState').textContent = '解析中…';
@@ -6074,8 +6058,9 @@ async function boot() {
   await loadBriefIndex();
   // 备忘录:角标要有数,展开过的话列表也一起拉回来
   await loadMemos();
-  // 课表:仪表盘上那行「今天接下来有什么」要有内容,所以启动就读一次。
-  // 只读存档,不跑模型 —— 解析是你点「重新解析」才发生的事
+  // 课表:顶层导航上「日程」那个角标(今天还剩几件事)要有数,所以启动就读
+  // 一次,哪怕这会儿停在学业页。只读存档,不跑模型 —— 解析是你点
+  // 「重新解析」才发生的事
   state.weekStart = wkYmd(wkSunday(new Date()));
   loadWeek();
   // 上次在哪个子页面就回哪个

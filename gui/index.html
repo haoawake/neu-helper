@@ -113,14 +113,6 @@
     <!-- 课程入口:点进去是这门课的单页(作业 / 课件 / 公告) -->
     <div class="course-chips" id="courseChips"></div>
 
-    <!-- 课程表入口。**不只是个按钮** —— 顺带把今天剩下的第一件事说出来,
-         不点进去也有用 -->
-    <button type="button" class="week-entry" id="btnWeek">
-      <span class="week-entry-k">课程表</span>
-      <span class="week-entry-v" id="weekEntryText">—</span>
-      <span class="week-entry-go" aria-hidden="true">›</span>
-    </button>
-
     <section class="block">
       <div class="block-head">
         <h2>待办</h2>
@@ -219,6 +211,16 @@
       </form>
     </div>
   <div class="tab-panel memo-panel" id="panelMemo" hidden>
+      <!-- 悬浮球浮窗那一态专用的标题条。平时 display:none —— 备忘录待在
+           右栏里的时候,标题栏和侧栏标签已经把"这是什么、怎么关"说清楚了。
+           浮窗那一态把整条 .titlebar 藏了,不补这一条就既没地方拖、
+           也没地方关。 -->
+      <div class="memo-peekbar">
+        <div class="memo-peekdrag drag-region" title="拖动移动窗口">备忘录</div>
+        <button class="icon-btn" id="btnMemoPeekClose" title="收起">
+          <span aria-hidden="true">✕</span><span class="sr">收起</span>
+        </button>
+      </div>
       <div class="memo-head">
         <button class="link-btn" id="btnMemoAdd">新增一条</button>
         <span class="memo-head-spacer"></span>

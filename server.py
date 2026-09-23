@@ -105,6 +105,31 @@ def _safe_name(name: str) -> str:
     return out[:120]
 
 
+# 弹窗里会出现的那几个固定词的英文。
+#
+# **只给右下角那条原生弹窗用。** 界面上的那份在 gui/i18n.js 的 EN 表里 ——
+# 那张表是权威,这里是它的一小块副本。副本存在的唯一理由是弹窗不是网页
+# (自己画的一张位图,DOM 观察者够不着),别为了别的用途往这儿加词。
+# 改了 i18n.js 里这几条记得改这儿。
+_TOAST_EN = {
+    # 作业紧急度(urgency_bucket)
+    "无期限": "no deadline", "已过期": "overdue", "今天到期": "due today",
+    "紧急": "urgent", "临近": "coming up", "充裕": "plenty of time",
+    # 邮件标签(mailai.TAG_DEFS)。标签是**枚举值**,模型那边永远输出中文
+    # (json_note 明说了不许翻枚举值),所以这儿必须自己映一道
+    "诈骗": "Scam", "学业": "Study", "求职": "Job hunt", "工作": "Work",
+    "会议": "Meeting", "行政": "Admin", "财务": "Money", "住房": "Housing",
+    "出行": "Travel", "健康": "Health", "订阅": "Subscriptions",
+    "广告": "Ads", "社交": "Social", "娱乐": "Entertainment",
+    "验证码": "Codes", "系统通知": "System",
+}
+
+
+def _toast_en(zh: str) -> str:
+    """中文档原样返回;英文档认得的换掉,认不出的(模型自己造的标签)也原样留着。"""
+    return _TOAST_EN.get(zh, zh) if applang.is_en() else zh
+
+
 def urgency_bucket(d: float | None, soon: float = 3.0) -> tuple[str, str, str]:
     """剩余天数 -> (状态 slug, 形状图标, 文字标签)。
 
@@ -736,9 +761,15 @@ class Backend:
         if sort == "date_asc":
             msgs.sort(key=lambda m: m.get("ts") or "")
         elif sort == "level":
-            # 级别高的在前,同级按时间新的在前
-            msgs.sort(key=lambda m: ((m["rank"] or {}).get("level", 1),
-                                     m.get("ts") or ""), reverse=True)
+            # 级别高的在前,同级按时间新的在前。
+            #
+            # **已读的一律按 0 级算。** 看过了就等于知道了 —— 再让它凭级别
+            # 顶在最前面,只会把没看过的挤到下面去,而"按重要程度排"这个动作
+            # 的全部意义就是"先给我看还没处理的"。已读的仍然在列表里,
+            # 只是退到所有未读后面,彼此之间按时间新旧排。
+            msgs.sort(key=lambda m: (
+                (m["rank"] or {}).get("level", 1) if m.get("unread") else 0,
+                m.get("ts") or ""), reverse=True)
         else:
             msgs.sort(key=lambda m: m.get("ts") or "", reverse=True)
         total = len(msgs)
@@ -937,11 +968,14 @@ class Backend:
             if t:
                 head = t[:40]
                 break
-        body = "点这里去更新。"
+        body = applang.tr("点这里去更新。", "Click here to update.")
         if head:
-            body = (f"共 {len(hist)} 个版本:{head}…" if len(hist) > 1
-                    else f"更新内容:{head}")
-        self.notify(f"有新版本 v{latest}", body, go="update", force=True)
+            body = (applang.tr(f"共 {len(hist)} 个版本:{head}…",
+                               f"{len(hist)} versions behind: {head}...")
+                    if len(hist) > 1
+                    else applang.tr(f"更新内容:{head}", f"What changed: {head}"))
+        self.notify(applang.tr(f"有新版本 v{latest}", f"v{latest} is out"),
+                    body, go="update", force=True)
 
     def start_update_watch(self) -> None:
         """开机查一次(等 40 秒,别和启动抢),之后每 CHECK_EVERY 一次。"""
@@ -1031,10 +1065,11 @@ class Backend:
             m = max(msgs, key=lambda x: (x.get("rank") or {}).get("level", 1))
             rank = m.get("rank") or {}
             who = (m.get("from") or "").split("<")[0].strip().strip('"')
-            tag = "/".join(rank.get("tags") or []) or ""
-            head = f"新邮件 · {who}" if who else "新邮件"
+            tag = "/".join(_toast_en(x) for x in (rank.get("tags") or []))
+            new_mail = applang.tr("新邮件", "New mail")
+            head = f"{new_mail} · {who}" if who else new_mail
             if added > 1:
-                head += f"(共 {added} 封)"
+                head += applang.tr(f"(共 {added} 封)", f" ({added} total)")
             body = rank.get("summary") or m.get("subject") or ""
             if tag:
                 body = f"[{tag}] {body}"
@@ -1060,12 +1095,16 @@ class Backend:
             now.add(key)
             fresh.append((key, f"{it.get('course_short') or ''} · "
                                f"{(it.get('title') or '').strip()}",
-                          f"{it.get('due_short') or '无期限'} 截止 · "
-                          f"{it.get('status_label') or ''}"))
+                          applang.tr(
+                              f"{it.get('due_short') or '无期限'} 截止 · "
+                              f"{it.get('status_label') or ''}",
+                              f"due {_toast_en(it.get('due_short') or '')} · "
+                              f"{_toast_en(it.get('status_label') or '')}")))
         for an in data.get("announcements") or []:
             key = "n" + str(an.get("id") or an.get("url") or an.get("title"))
             now.add(key)
-            fresh.append((key, f"{an.get('course') or ''} 新公告",
+            fresh.append((key, applang.tr(f"{an.get('course') or ''} 新公告",
+                                          f"{an.get('course') or ''} announcement"),
                           (an.get("title") or "").strip()))
         if self._seen_items is None:
             self._seen_items = now          # 第一次只记账
@@ -1076,7 +1115,8 @@ class Backend:
             return
         head, body = newly[0][1], newly[0][2]
         if len(newly) > 1:
-            head += f"(还有 {len(newly) - 1} 条)"
+            head += applang.tr(f"(还有 {len(newly) - 1} 条)",
+                               f" (+{len(newly) - 1} more)")
         self.notify(head, body)
 
     def push_memos(self) -> None:
@@ -2037,6 +2077,18 @@ def api_peek_pin():
     return jsonify({"ok": True, "pinned": on})
 
 
+@app.post("/api/window/peek/off")
+def api_peek_off():
+    """手动收掉那条浮窗。
+
+    **必须有这一条。** 自动收起看的是"指针离开了没",而指针一旦在浮窗里
+    点过一下,浮窗就成了前台窗口 —— 那时候 `_peek_watch` 认定你还在用它,
+    永远不收。没有这个接口的话,点过一下的浮窗就再也关不掉了。
+    """
+    backend.peek_off(force=True)
+    return jsonify({"ok": True})
+
+
 @app.get("/api/setup")
 def api_setup_state():
     """安装完整吗。只读、不改东西。
@@ -2474,10 +2526,16 @@ def apply_mode(mode: str) -> dict:
 
             threading.Thread(target=grow, daemon=True).start()
         else:
+            def resize():
+                # 和收球那条路一样先等页面把内容淡掉(CSS 110ms)。不等的话
+                # 三栏重排和窗口形变同时发生,看着就是"整个屏幕先变一次
+                # 再缩小",而不是一个连续的动作
+                time.sleep(0.11)
+                native_window.animate_to(h, w, ht)
+
             # 形变放后台线程,HTTP 立刻返回 —— 否则前端要等 260ms 才能换 CSS,
             # 原生窗口和页面内容就对不上了
-            threading.Thread(target=native_window.animate_to,
-                             args=(h, w, ht), daemon=True).start()
+            threading.Thread(target=resize, daemon=True).start()
         # 整窗透明度要重贴:从隐藏状态 show() 回来时,分层属性还在,
         # 但尺寸变过,重设一次最省心
         native_window.set_window_alpha(h, float(prefs["opacity"]))

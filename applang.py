@@ -30,6 +30,20 @@ def is_en() -> bool:
     return LANG == "en"
 
 
+def tr(zh: str, en: str) -> str:
+    """两句里挑一句。
+
+    **只给右下角那条原生弹窗用。** 界面上的中文全部由 `gui/i18n.js` 在 DOM
+    边界翻,Python 这边一个字都不用管 —— 唯独弹窗不是网页:它是自己画的一张
+    位图(toast_render),文字在进位图之前就定死了,观察者够不着。
+    所以那几条(新邮件、新作业、有新版本)只能在这儿分岔。
+
+    别把这个函数用到别处 —— 一旦开始在 Python 里拼英文文案,同一套话就有了
+    两个出处,i18n.js 那张表会慢慢变得不可信。
+    """
+    return en if LANG == "en" else zh
+
+
 def reply_note() -> str:
     """追加在用户消息末尾的语言要求。
 

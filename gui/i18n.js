@@ -167,14 +167,32 @@ const RULES = [
   [/^当前 (v[\d.]+)$/, 'Now on $1'],
   [/^这段约 (\$[\d.]+)$/, 'About $1 for this chat'],
   [/^本会话约 (\$[\d.]+)$/, 'About $1 this session'],
-  [/^(.+) 没有每周固定安排$/, '$1 has nothing weekly'],
+  [/^(.+) 没有每周固定安排$/, (m, a) => `${a.replace(/、/g, ', ')} has nothing weekly`],
   [/^(\d+) 条被你删掉了,所以格子里看不到 —— 重新解析也不会把它们请回来。$/,
    '$1 you deleted are hidden, so the grid looks empty. Re-parsing puts them back.'],
+  [/^(.+)\(分析时自己造的标签,没有内置定义\)$/,
+   '$1 (made up during analysis, no built-in definition)'],
+  // 这几条里的标签名自己也要翻,所以用函数替换而不是 $1
+  [/^只看「(.+)」这一类$/, (m, a) => `Only ${t(a)}`],
+  [/^回列表并只看「(.+)」$/, (m, a) => `Back to the list, ${t(a)} only`],
+  [/^把「(.+)」从目录里删掉\(已经打过这个标签的邮件不受影响\)$/,
+   (m, a) => `Drop "${t(a)}" from the list (mails already tagged keep it)`],
+  /* 「甲 —— 乙」这种两段式,两头各自再过一遍表。**放在最后** —— 它宽到
+     什么都能匹配,前面任何一条更具体的规则都该先赢。标签的悬停说明
+     (「财务 —— 账单、缴费…」)就长这样,两头都在表里、合起来不在。 */
+  [/^(.+?) —— (.+)$/, (m, a, b) => t(a) + ' - ' + t(b)],
 ];
 
 /* 拼出来的句子:只认固定的那几段连接词,中间的数据原样留着。
    **顺序有意义** —— 长的排前面,免得短的先把它切开。 */
+const WEEK_EN = { 一: 'Mon', 二: 'Tue', 三: 'Wed', 四: 'Thu',
+                  五: 'Fri', 六: 'Sat', 日: 'Sun' };
+
 const FRAGS = [
+  // **必须排在 /(\d+) 项/ 前面**,不然「2 项」先被换成「2 items」,
+  // 这条整句就再也匹配不上了
+  [/ · 已划掉 (\d+) 项\(不计入简报\)/g,
+   ' · $1 crossed out (left out of the briefing)'],
   [/加载失败:/g, 'Could not load: '],
   [/后端没响应:/g, 'The backend did not answer: '],
   [/正在进行 · /g, 'In progress · '],
@@ -186,7 +204,9 @@ const FRAGS = [
   [/(\d+) 条手加/g, '$1 added by hand'],
   [/(\d+) 条备忘/g, '$1 memos'],
   [/(\d+) 封信说的是这件事/g, '$1 mails are about this'],
-  [/(今天)/g, ' (today)'],
+  // 括号要转义。不转就是一个捕获组,只匹配「今天」两个字 —— 原来那对括号会
+  // 留在原地,翻出来是「2026-09-22( (today))」
+  [/\(今天\)/g, ' (today)'],
   [/ · 最近 /g, ' · last '],
   [/(\d+) 轮/g, '$1 turns'],
   [/正在生成…/g, 'generating...'],
@@ -197,6 +217,9 @@ const FRAGS = [
   [/(\d+) 个未提交/g, '$1 unsubmitted'],
   [/(\d+) 个文件/g, '$1 files'],
   [/(\d+) 项/g, '$1 items'],
+  // **排在 /抓取于/ 前面。** 反过来的话只吃掉后半截,
+  // 剩个「数据fetched 2026-09-22 10:00」
+  [/数据抓取于 /g, 'Data fetched '],
   [/抓取于 /g, 'fetched '],
   [/ · 课件在 /g, ' · files in '],
   [/超过 (\d+) MB,默认不同步/g, 'over $1 MB, not synced by default'],
@@ -204,6 +227,15 @@ const FRAGS = [
   [/得分 /g, 'score '],
   [/同步中 /g, 'syncing '],
   [/截止 · /g, 'due · '],
+  // 后端给的那个日期(server.py 的 today:「09月22日 周二」)。
+  // 它夹在「Zihao · …」里,整条对不上表,只能按片段换
+  [/(\d+)月(\d+)日 周([一二三四五六日])/g,
+   (m, mo, d, w) => `${+mo}/${+d} ${WEEK_EN[w] || ''}`.trim()],
+  // 光秃秃一个「周三」(被删条目那张清单、日程块上的小字)。
+  // **前面挡一道**:「本周 / 上周 / 下周 / 每周 / 整周」里那个「周」
+  // 不是星期几,换掉会得到「下Mon」
+  [/(?<![上下本每整])周([一二三四五六日])/g, (m, w) => WEEK_EN[w] || m],
+  [/^截止 /g, 'Due '],
 
   /* 日程 */
   [/现在 (\d+:\d+)/g, 'Now $1'],
@@ -280,6 +312,9 @@ const FRAGS = [
 
   // **兜底,放在最后。** 前面的规则可能只换走半句,留下一个光秃秃的「——」。
   // 破折号在英文里不这么用,统一收成一个连字符
+  // 顿号英文里没有,换成逗号。**放在最后一条** —— 前面那些规则里
+  // 有拿顿号当锚点的
+  [/、/g, ', '],
   [/ —— /g, ' - '],
 ];
 
@@ -686,6 +721,7 @@ const EN = {
     'No files for this course, or the instructor has not opened the files area.',
   '打开这个模块在本地的目录': 'Open this module folder on this computer',
   '其他文件': 'Other files',
+  '最近十天没有公告。': 'No announcements in the last ten days.',
   '最近三周没有公告。': 'No announcements in the last three weeks.',
   '打不开': 'Could not open',
   '打不开那个位置': 'Could not open that location',
@@ -749,9 +785,12 @@ const EN = {
   '超过设置里的单个附件上限,没有自动下载':
     'Over the per-file limit in Settings, so it was not downloaded',
   '\n单击打开 · 右键打开所在文件夹': '\nClick to open, right-click for the folder',
-  '表单': 'form', '职位': 'job', '会议': 'meeting', '日历': 'calendar',
-  '网盘': 'drive', '视频': 'video', '验证': 'verify', '订单': 'order',
-  '账单': 'bill',
+  /* 链接前面那个小标签(LINK_KINDS)。首字母大写 —— 同一排里还有
+     「Canvas」「PDF」这种本来就大写的,小写的挤在中间很扎眼。
+     「会议」在邮件标签那一档也用得上,一个词管两处 */
+  '表单': 'Form', '职位': 'Job', '会议': 'Meeting', '日历': 'Calendar',
+  '网盘': 'Drive', '视频': 'Video', '验证': 'Verify', '订单': 'Order',
+  '账单': 'Bill',
   '返回列表': 'Back to the list',
   '返回列表(Esc)': 'Back to the list (Esc)',
   '标为已读': 'Mark as read',
@@ -862,4 +901,91 @@ const EN = {
   '正在问 GitHub…': 'Asking GitHub...',
   '查不到:': 'Could not check: ',
   '没跑起来:': 'Did not start: ',
+
+  /* ── 后端送过来的那些词 ──
+
+     这一批**不在 index.html 和 app.js 里**,所以照着源码找是找不到的:
+     它们在 Python 那边(仪表盘的统计名、作业紧急度、邮件的级别和标签),
+     随接口下来直接进 DOM。按原文索引的好处这时候显出来 —— 前后端一个字
+     都不用改,进了 DOM 就翻。 */
+
+  /* 仪表盘统计(server.py 的 dashboard) */
+  '未提交待办': 'To do',
+  '学分课': 'Credit courses',
+  '待拿分值': 'Points at stake',
+
+  /* 作业紧急度(server.py 的 urgency_bucket) */
+  '已过期': 'Overdue',
+  '今天到期': 'Due today',
+  '紧急': 'Urgent',
+  '临近': 'Coming up',
+  '充裕': 'Plenty of time',
+
+  /* 邮件级别(mailai.py 的 LEVELS) */
+  '要紧': 'Important',
+  '留意': 'Worth a look',
+  '普通': 'Normal',
+  '噪音': 'Noise',
+  '没过目': 'Not reviewed',
+
+  /* 邮件标签(mailai.py 的 TAG_DEFS)。**值是分类键**,不只是文案 ——
+     筛选、坏标签、分组都按它走。这里只换看得见的那份,option 的 value
+     和 dataset 里的原文不动(ATTRS 不含它们),所以功能不受影响。 */
+  '诈骗': 'Scam',
+  '求职': 'Job hunt',
+  '工作': 'Work',
+  '行政': 'Admin',
+  '财务': 'Money',
+  '住房': 'Housing',
+  '出行': 'Travel',
+  '健康': 'Health',
+  '订阅': 'Subscriptions',
+  '广告': 'Ads',
+  '社交': 'Social',
+  '娱乐': 'Entertainment',
+  '验证码': 'Codes',
+  '系统通知': 'System',
+  '未分类': 'Untagged',
+
+  /* 标签的定义。悬停在标签上看得到,**和进模型 prompt 的是同一份** ——
+     那边永远是中文(模型按中文判),这边只是让人读得懂 */
+  '冒充他人或机构、钓鱼链接、索要密码或转账。**必须有实据**,见下面那条':
+    'Impersonating a person or institution, phishing links, asking for a '
+    + 'password or a transfer. **Needs hard evidence** - see the note below',
+  '课程、作业、成绩、考试、导师和助教':
+    'Courses, assignments, grades, exams, advisors and TAs',
+  '投递、面试、招聘、实习、offer':
+    'Applications, interviews, recruiting, internships, offers',
+  '在职的事务、同事、项目、报销':
+    'On-the-job matters, colleagues, projects, reimbursements',
+  '具体的会面、约谈、预约、要到场的活动':
+    'A specific meeting, appointment, booking, or event you have to attend',
+  '学校、政府、签证、保险、税务的事务性通知':
+    'Paperwork from the school, government, visa, insurance or tax offices',
+  '账单、缴费、续费、退款、工资、到期提醒 —— 我真在用的服务发的':
+    'Bills, payments, renewals, refunds, pay, expiry notices - from services '
+    + 'I actually use',
+  '房东、公寓、水电、网络、维修、租约':
+    'Landlord, apartment, utilities, internet, repairs, lease',
+  '机票、火车、酒店、行程变更':
+    'Flights, trains, hotels, itinerary changes',
+  '就诊、体检、保险理赔、药房':
+    'Appointments, check-ups, insurance claims, pharmacy',
+  '我自己订的通讯、周报、课程推送 —— 不用回,但可能想看':
+    'Newsletters and digests I signed up for - nothing to answer, but I may '
+    + 'want to read them',
+  '促销、推广、我没订过的营销邮件':
+    'Promotions and marketing I never signed up for',
+  '社交网站的互动通知(点赞、关注、私信提醒)':
+    'Activity notices from social sites (likes, follows, DM alerts)',
+  '游戏、影音、兴趣社群':
+    'Games, media, hobby communities',
+  '一次性验证码、登录码、魔术链接':
+    'One-time codes, login codes, magic links',
+  '机器自动发的状态、告警、构建结果、日志':
+    'Machine-generated status, alerts, build results, logs',
+
+  /* 悬浮球那条备忘录浮窗自己的标题条 */
+  '拖动移动窗口': 'Drag to move the window',
+  '收起': 'Close',
 };
