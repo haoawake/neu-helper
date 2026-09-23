@@ -293,8 +293,9 @@ def where_problem(here: Path) -> str:
             "Move the whole folder somewhere you own (Documents, say) "
             "and try again.")
     # 临时目录。TEMP 本身就是一个很深的路径,所以比的是"在不在它下面",
-    # 不是相等
-    for var in ("TEMP", "TMP"):
+    # 不是相等。**TMPDIR 是 macOS/Linux 那边的名字** —— 只认 TEMP/TMP 的话
+    # 这道闸在非 Windows 上等于不存在
+    for var in ("TEMP", "TMP", "TMPDIR"):
         root = os.environ.get(var)
         if not root:
             continue
@@ -433,16 +434,21 @@ class Updater:
         if not url:
             self._set(phase="error", error="这个版本没有本平台的安装包")
             return False
+        # **macOS 的判断要排在最前面。** 那边这条路整个不走(替换 .app 的流程
+        # 没在真机上验证过),所以不该先去查"装在哪能不能写" —— 装在
+        # /Applications 的人会得到一句"装不进去",而真正该说的是"手动更新"。
+        if platform_id.IS_MAC:
+            self._set(phase="error",
+                      error=applang.tr(
+                          "macOS 暂时只能手动更新 —— 已经帮你打开下载页",
+                          "On macOS the update is manual for now — "
+                          "the download page is open"))
+            return False
         bad = where_problem(self.here)
         if bad:
             # **先查再下。** 装不进去的话 25MB 下完了也是白下 —— 而且下完之后
             # 这个进程就退了,那时候再报错根本没人看得见
             self._set(phase="error", error=bad)
-            return False
-        if platform_id.IS_MAC:
-            # 没在真机上验证过替换 .app 的流程,不拿别人的安装目录做实验
-            self._set(phase="error",
-                      error="macOS 暂时只能手动更新 —— 已经帮你打开下载页")
             return False
         if not self._lock.acquire(blocking=False):
             return False
