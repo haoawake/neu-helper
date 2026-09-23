@@ -1,0 +1,80 @@
+name: Sync release descriptions
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - packaging/release_descriptions.json
+      - .github/workflows/sync-release-descriptions.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply release titles and descriptions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GH_API_URL: ${{ github.api_url }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          api = os.environ["GH_API_URL"]
+          repo = os.environ["GH_REPO"]
+          token = os.environ["GH_TOKEN"]
+
+          with open("packaging/release_descriptions.json", "r", encoding="utf-8") as f:
+              descriptions = json.load(f)
+
+          def request(url, method="GET", payload=None):
+              data = None
+              if payload is not None:
+                  data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  method=method,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req) as response:
+                  raw = response.read()
+              return json.loads(raw.decode("utf-8")) if raw else None
+
+          releases = request(f"{api}/repos/{repo}/releases?per_page=100")
+          releases_by_tag = {release["tag_name"]: release for release in releases}
+
+          applied = 0
+          for tag, description in descriptions.items():
+              release = releases_by_tag.get(tag)
+              if release is None:
+                  print(f"release entry pending: {tag}")
+                  continue
+
+              request(
+                  f"{api}/repos/{repo}/releases/{release['id']}",
+                  method="PATCH",
+                  payload={
+                      "name": description["title"],
+                      "body": description["body"],
+                  },
+              )
+              applied += 1
+              print(f"updated {tag}")
+
+          print(f"Applied {applied} release descriptions.")
+          PY
