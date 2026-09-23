@@ -791,6 +791,27 @@ UI 使用 pywebview 承载前端，本地 Python 后端负责 Canvas、邮件、
 
 ---
 
+## 发版
+
+打一个 `v*` 的 tag 就完事 —— GitHub Actions 在 windows-latest 上构建，把
+`NEU-Helper-win-x64.zip` 发成 Release（`.github/workflows/release.yml`）。
+本机不用装 PyInstaller，也不用手动往网页上拖 zip。
+
+    1. 改 version.py 里的 VERSION
+    2. 写 packaging/notes/v<版本>.md   ← 第一行是 Release 标题
+    3. git tag -a v<版本> && git push origin v<版本>
+
+三条都别省：
+
+- **VERSION 和 tag 必须一致**，工作流里有一道闸，对不上直接失败。这两个一旦
+  不一致，应用里的更新检查会永远错在一个方向上（"总是最新"或者"总有更新"），
+  而且极难从用户的报告里查出来
+- **配文不是装饰**：`updater.py` 会把 Release 正文拉进应用，显示在「改了什么」
+  那个按钮后面。正文空着，就等于刚更新完的人被告知这一版啥也没改。没有这个
+  文件也能发出去，但日志里会 `::warning::`
+- 资产名固定是 `NEU-Helper-win-x64.zip`，`updater._asset_name()` 按它找下载
+  地址，改名等于所有人都更新不了
+
 ## 自检
 
 仓库包含：

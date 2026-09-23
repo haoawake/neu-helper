@@ -108,10 +108,38 @@ jobs:
           echo "title=$title" >> "$GITHUB_OUTPUT"
           echo "body is $(wc -c < release-body.md) bytes"
 
+      # 用预装的 gh,不用第三方 action。
+      #
+      # 为什么换掉 softprops/action-gh-release:它在**创建**Release 时认
+      # body_path,在**更新已存在的**那条路上却不认 —— 正文原样保留。而重打
+      # 一个 tag(修了 CI 再发一次,这一版就干了四回)走的正是更新那条路。
+      # 表现是所有步骤全绿、Release 的配文却一直是旧的,没有任何一处报错。
+      #
+      # gh 的每一步做什么写在脸上,出问题也看得见。
       - name: publish the release
         if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/NEU-Helper-win-x64.zip
-          name: ${{ steps.notes.outputs.title }}
-          body_path: release-body.md
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.notes.outputs.title }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          zip=dist/NEU-Helper-win-x64.zip
+          echo "title: $TITLE"
+          echo "body:  $(wc -c < release-body.md) bytes"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release exists -> updating"
+            gh release edit "$tag" --title "$TITLE" --notes-file release-body.md
+            gh release upload "$tag" "$zip" --clobber
+          else
+            echo "creating the release"
+            gh release create "$tag" --title "$TITLE" --notes-file release-body.md "$zip"
+          fi
+          # 发完回头读一遍。正文没写进去就当场失败 —— 上一次正是"绿着但没生效"
+          got=$(gh release view "$tag" --json body --jq '.body | length')
+          echo "the release body now has $got characters"
+          if [ "$got" -lt 100 ]; then
+            echo "::error::the release body did not take"
+            exit 1
+          fi
