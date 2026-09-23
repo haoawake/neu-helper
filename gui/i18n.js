@@ -262,7 +262,8 @@ const FRAGS = [
   [/读不到邮件:/g, 'Could not read mail: '],
   [/ · (\d+) 未读/g, ' · $1 unread'],
   [/更新于 /g, 'updated '],
-  [/· 盯着 (\d+) 封/g, '· watching $1'],
+  // 它现在是个按钮上的文字(可点的筛选),和旁边的说明文字不一样了 —— 大写
+  [/· 盯着 (\d+) 封/g, '· Watching $1'],
   [/盯了 (\d+) 天/g, 'watched for $1 d'],
   [/盯住了/g, 'Watching it'],
   [/\/ (\d+) 页 · 共 (\d+) 封/g, '/ $1 pages · $2 mails'],
@@ -994,6 +995,15 @@ const EN = {
     'One-time codes, login codes, magic links',
   '机器自动发的状态、告警、构建结果、日志':
     'Machine-generated status, alerts, build results, logs',
+
+  /* 「盯着 N 封」那个开关 */
+  '· 盯着的(已清空)': '· Watching (none left)',
+  '只看盯着的这几封': 'Show only the ones you are watching',
+  '回到全部邮件': 'Back to all mail',
+  '没有盯着的邮件。在卡片右下角点 ☆ 就能盯住一封 —— 每天的邮件简报都会提醒,直到你标完成。':
+    'Nothing is being watched. Hit the star at the bottom right of a card to '
+    + 'watch one - the daily mail brief will keep reminding you until you '
+    + 'mark it done.',
 
   /* 邮件搜索(顶上那条) */
   '搜索邮件': 'Search mail',

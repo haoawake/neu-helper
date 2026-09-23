@@ -746,12 +746,23 @@ class Backend:
             return False
         return bool(set((m.get("rank") or {}).get("tags") or []) & trash_tags)
 
+    @staticmethod
+    def pinned(m: dict) -> int:
+        """这封信"盯着"吗 —— 标了重点、还没标完成。
+
+        盯住一封信的意思就是"这件事我还没处理完,别让它沉下去"。所以它是
+        **所有排序的第一顺位**:按时间排、按重要程度排,盯着的都在最上面。
+        标完成之后就退出置顶,回到普通的排序里。
+        """
+        return 1 if (m.get("star") and not m.get("done")) else 0
+
     def list_messages(self, per: int = PAGE_SIZE, page: int = 1,
                       account: str | None = None,
                       unread_only: bool = False, day: str | None = None,
                       tag: str = "", min_level: int = 0,
                       sort: str = "date_desc", box: str = "in",
-                      person: str = "") -> tuple[list[dict], int]:
+                      person: str = "",
+                      star_only: bool = False) -> tuple[list[dict], int]:
         """筛完排完再切页。返回 (这一页, 筛选后总数)。
 
         切页放在最后一步:要是先切再排,"按重要程度排"就只在这 50 封里排,
@@ -768,23 +779,28 @@ class Backend:
             msgs = [m for m in msgs if tag in ((m["rank"] or {}).get("tags") or [])]
         if min_level:
             msgs = [m for m in msgs if (m["rank"] or {}).get("level", 1) >= min_level]
+        if star_only:
+            msgs = [m for m in msgs if self.pinned(m)]
         if sort == "date_asc":
-            msgs.sort(key=lambda m: m.get("ts") or "")
+            # 盯着的照样置顶;-pinned 配升序 = 1 在前
+            msgs.sort(key=lambda m: (-self.pinned(m), m.get("ts") or ""))
         elif sort == "level":
-            # **"未读还是已读"是第一顺位,级别只在未读里面比。**
+            # 三层:盯着的 > 未读/已读 > 级别 > 时间。
             #
-            # 看过了就等于知道了,所以已读的一律退到所有未读后面 ——
-            # 哪怕它是「要紧」,也比不过一封未读的「普通」。原来是把已读折成
-            # 0 级,那样它还能和未读的「噪音」(也是 0 级)按时间混排,
-            # 于是一封刚到的已读信仍然会插到未读前面。
+            # **"未读还是已读"压过级别**:已读的「要紧」比不过未读的「普通」——
+            # 看过了就等于知道了,不该再把没看过的挤下去。
             #
-            # 已读之间不再比级别(反正都知道了),按时间新旧排。
+            # **但已读那一堆里面,级别照样管用。** 原来那一版把已读一律折成
+            # 0 级,于是"按重要程度排"对已读的部分完全失效 —— 翻到已读那一段
+            # 就变成纯时间序了,而那恰恰是回头找一封要紧信的时候。
             msgs.sort(key=lambda m: (
+                self.pinned(m),
                 1 if m.get("unread") else 0,
-                (m["rank"] or {}).get("level", 1) if m.get("unread") else 0,
+                (m["rank"] or {}).get("level", 1),
                 m.get("ts") or ""), reverse=True)
         else:
-            msgs.sort(key=lambda m: m.get("ts") or "", reverse=True)
+            msgs.sort(key=lambda m: (self.pinned(m), m.get("ts") or ""),
+                      reverse=True)
         total = len(msgs)
         per = max(1, min(int(per), 500))
         page = max(1, int(page))
@@ -2750,6 +2766,7 @@ def api_mail():
         tag=request.args.get("tag") or "",
         min_level=int(request.args.get("level") or 0),
         sort=request.args.get("sort") or "date_desc",
+        star_only=request.args.get("star") == "1",
     )
     pages = max(1, (total + per - 1) // per)
     page = min(max(1, page), pages)
@@ -2980,7 +2997,10 @@ def api_mail_index():
             "m": (r.get("summary") or m.get("snippet") or "")[:180],
             "g": " ".join(r.get("tags") or []),
             "b": 1 if backend.is_trash(m, trash_tags) else 0,
+            # 盯着的要置顶,所以搜索结果也得知道 star / done 这一对
+            # (盯着 = 标了重点、还没标完成)
             "st": 1 if m.get("star") else 0,
+            "dn": 1 if m.get("done") else 0,
             "p": m.get("person") or "",
         })
     # 列表是 ts 倒序的(mail.all 保证),所以下标就是时间序 ——

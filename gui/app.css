@@ -2278,6 +2278,22 @@ body.is-mailsearch #mailList { display: none; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
+/* 「盯着 N 封」—— 可点的开关。平时和旁边那些说明文字一样淡,
+   打开之后用强调色标出来:它是个筛选,开着的时候必须一眼看得出 */
+.watch-chip {
+  appearance: none; border: 0; background: none; font: inherit;
+  padding: 2px 6px; border-radius: 999px; cursor: pointer;
+  font-size: 11.5px; white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease);
+}
+.watch-chip:hover { background: var(--glass-hover); color: var(--text-primary); }
+.watch-chip.is-on {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
 /* 「全部标已读」按到第二下(确认态)时变个色,不然看不出来它在等确认 */
 .link-btn.is-warn { color: var(--critical); font-weight: 650; }
 

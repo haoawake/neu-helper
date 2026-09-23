@@ -343,7 +343,10 @@
         <span class="box-n" id="mailTrashN" hidden></span>
         <span class="sr">垃圾箱</span>
       </button>
-      <span class="muted" id="mailWatchCount"></span>
+      <!-- 「盯着 N 封」。**是个按钮不是一段文字** —— 它能点(只看盯着的),
+           那就得能用键盘走到、读屏也念得出来 -->
+      <button type="button" class="muted watch-chip" id="mailWatchCount"
+              aria-pressed="false" hidden></button>
       <select id="mailPerson" class="select" aria-label="按发件人分组">
         <option value="">所有人</option>
       </select>

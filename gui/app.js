@@ -51,6 +51,7 @@ const state = {
   mailDay: '',         // 只看某一天(空 = 所有日期)
   mailTag: '',         // 只看某个标签
   mailQuery: '',       // 顶上那个搜索框里的字(非空 = 正在搜,列表让位给结果)
+  mailStarOnly: false, // 只看盯着的(点顶栏那句「盯着 N 封」切换)
   mailTagCounts: {},   // 当前这批里每个标签有几封
   mailDays: [],        // 有邮件的日期
   mailAi: null,        // AI 过目的进度
@@ -2386,6 +2387,7 @@ async function loadMail() {
       day: state.mailDay || '',
       tag: state.mailTag || '',
       level: String(state.mailMinLevel || 0),
+      star: state.mailStarOnly ? '1' : '0',
     });
   } catch (e) {
     showMailBanner('读不到邮件:' + e.message);
@@ -2470,7 +2472,15 @@ function renderMailState(st) {
   const w = st.watching || (state.mail && state.mail.watching) || 0;
   const wc = $('mailWatchCount');
   if (wc) {
+    // 点它 = 只看盯着的。这句话原来只是个数字,可"盯了几封"之后第一个念头
+    // 就是"哪几封" —— 数字旁边不给入口反而添堵(和「已进日程」那个 chip
+    // 同一个道理)
     wc.textContent = w ? `· 盯着 ${w} 封` : '';
+    wc.hidden = !w && !state.mailStarOnly;
+    wc.classList.toggle('is-on', !!state.mailStarOnly);
+    wc.setAttribute('aria-pressed', String(!!state.mailStarOnly));
+    wc.title = state.mailStarOnly ? '回到全部邮件' : '只看盯着的这几封';
+    if (state.mailStarOnly && !w) wc.textContent = '· 盯着的(已清空)';
   }
   $('mailFoot').textContent = (st.errors && st.errors.length)
     ? st.errors[st.errors.length - 1] : '';
@@ -2489,7 +2499,10 @@ function renderMailList() {
   const list = $('mailList');
   list.textContent = '';
   if (!state.mailMsgs.length) {
-    const why = state.mailBox === 'trash'
+    const why = state.mailStarOnly
+      ? '没有盯着的邮件。在卡片右下角点 ☆ 就能盯住一封 —— 每天的邮件简报都会'
+        + '提醒,直到你标完成。'
+      : state.mailBox === 'trash'
       ? '垃圾箱是空的。在设置 → 邮箱 → 标签目录里点 🗑 把某个标签设成坏标签,'
         + '带这个标签的信就会收进这儿。'
       : state.mailPerson ? `「${state.mailPerson}」这一组还没有来信。`
@@ -2591,13 +2604,16 @@ function mailHits(q) {
     }
     if (ok) out.push(i);
   }
-  // 未读在前;未读之间按级别;其余按时间(下标就是时间序,后端给的是 ts 倒序)。
-  // 和「按重要程度」那个排序同一个口径:已读的一律退到未读后面
+  // 和后端 list_messages 的「按重要程度」同一个口径,四层:
+  //   盯着的 > 未读/已读 > 级别 > 时间
+  // (下标就是时间序 —— 后端给的索引本来就是 ts 倒序)
+  const pin = (r) => (r.st && !r.dn ? 1 : 0);
   out.sort((a, b) => {
     const ra = rows[a];
     const rb = rows[b];
+    if (pin(ra) !== pin(rb)) return pin(rb) - pin(ra);
     if (ra.u !== rb.u) return rb.u - ra.u;
-    if (ra.u && ra.l !== rb.l) return rb.l - ra.l;
+    if (ra.l !== rb.l) return rb.l - ra.l;
     return a - b;
   });
   return out;
@@ -2664,7 +2680,7 @@ function mailHitRow(r) {
     chip.appendChild(el('span', null, r.lb));
     top.appendChild(chip);
   }
-  if (r.st) top.appendChild(el('span', 'mail-hit-star', '★'));
+  if (r.st && !r.dn) top.appendChild(el('span', 'mail-hit-star', '★'));
   top.appendChild(el('span', 'mail-act-spacer'));
   top.appendChild(el('span', 'mail-date muted', r.t || ''));
   row.appendChild(top);
@@ -4180,6 +4196,11 @@ function wireMail() {
     box.focus();
   });
   $('btnMailSeenAll').addEventListener('click', markAllSeen);
+  $('mailWatchCount').addEventListener('click', () => {
+    state.mailStarOnly = !state.mailStarOnly;
+    state.mailPage = 1;
+    loadMail();
+  });
 
   $('btnMailUnread').addEventListener('click', () => {
     state.mailUnreadOnly = !state.mailUnreadOnly;
