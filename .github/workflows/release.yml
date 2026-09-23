@@ -8,8 +8,19 @@
 # 交给 Actions 之后:打 tag = 出包。用的是 runner 自带的 GITHUB_TOKEN,
 # 不碰任何人的个人凭据。
 #
-# **资产名不能改。** updater.py 按 `NEU-Helper-win-x64.zip` 这个名字找下载地址
-# (见 _asset_name),改了名应用就更新不了 —— build_win.ps1 生成的就是这个名字。
+# **资产名不能改。** updater.py 按固定的名字找下载地址(见 _asset_name):
+#     Windows   NEU-Helper-win-x64.zip
+#     macOS     NEU-Helper-mac-<arch>.zip      arch = platform.machine()
+# 改了名应用就更新不了。两个构建脚本生成的正是这两个名字。
+#
+# ── 三个 job,为什么这么分 ──
+#
+# windows / macos 各自构建,publish 收拢起来发一次。原来 publish 是 windows
+# 那个 job 里的最后一步;加了 macOS 之后必须拆开,否则没法等两边都出包。
+#
+# **macos 是 continue-on-error 的。** 那一档在真机上没验证过(见 README
+# 最后一节),构建环境也是新的 —— 它挂了不该把 Windows 那个包一起拖住。
+# 挂了的结果就是 Release 里只有 win 的 zip,和加它之前一样。
 
 name: release
 
@@ -34,10 +45,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # 默认是深度 1,那样 `git describe` 找不到上一个 tag,
-          # compare 链接就拼不出来
-          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -51,6 +58,9 @@ jobs:
       # version.py 是版本号唯一的来源。它和 tag 对不上的话,应用里的更新检查会
       # 永远错在一个方向上("总是最新"或者"总有更新"),而且极难从用户的报告里查出来。
       # 所以在这儿拦住,别让它发出去。
+      #
+      # **只在这个 job 里查一次就够。** publish 要等 windows 成功才跑,
+      # 所以对不上的话整条线根本走不到发布那一步。
       - name: version must match the tag
         shell: bash
         run: |
@@ -67,8 +77,58 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NEU-Helper-win-x64
+          name: pkg-win
           path: dist/NEU-Helper-win-x64.zip
+          if-no-files-found: error
+
+  macos:
+    # macos-latest 是 Apple 芯片(arm64)。**Intel Mac 用不了这个包** ——
+    # PyInstaller 冻的是构建机的解释器和原生库,换架构就跑不起来。
+    # 那边只能自己跑 packaging/build_mac.sh,README 里写了。
+    runs-on: macos-latest
+    continue-on-error: true      # 未验证的一档,不许它拖累 Windows 那个包
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # 依赖装在脚本里(它要照顾"Homebrew 的 python 不让 pip install"那种情况),
+      # 这里只把它跑起来。产物是 dist/NEU-Helper-mac-<arch>.zip
+      - name: build
+        run: |
+          chmod +x packaging/build_mac.sh
+          ./packaging/build_mac.sh
+
+      - name: what came out
+        run: ls -la dist/*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-mac
+          path: dist/NEU-Helper-mac-*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, macos]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 默认是深度 1,那样 `git describe` 找不到上一个 tag,
+          # compare 链接就拼不出来
+          fetch-depth: 0
+
+      # 不写 name = 把所有 artifact 都下下来,各自一个子目录。
+      # macos 挂掉的话就只有 pkg-win,下面的 glob 自然只找到一个包。
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: what we are going to attach
+        run: find dl -name '*.zip' -printf '%p  %s bytes\n'
 
       # Hand-written release notes live in packaging/notes/<tag>.md. They matter
       # more than they look: updater.py pulls the release body into the app and
@@ -79,15 +139,13 @@ jobs:
       # No file -> fall back to the auto-generated changelog, which is better
       # than nothing but should be the exception.
       - name: read the release notes
-        if: github.ref_type == 'tag'
         id: notes
-        shell: bash
         run: |
-          # **写进工作区,不要写 /tmp。** 这是 Windows runner:bash 步骤看到的
-          # /tmp 是 Git Bash 自己那套 MSYS 路径,而下面那个 action 是 Node 写的,
-          # 它把 body_path 当普通 Windows 路径解释 —— 两边根本不是同一个目录,
-          # 文件"明明写出来了"却读不到。第一次就是这么悄悄退回自动 changelog 的
-          # (所有步骤还都是绿的)。相对路径由 action 按工作区解析,不会错。
+          # **写进工作区,不要写 /tmp。** 历史原因:这一步原来跑在 Windows
+          # runner 上,那儿 bash 看到的 /tmp 是 Git Bash 自己那套 MSYS 路径,
+          # 而读它的 action 是 Node 写的、按普通 Windows 路径解释 —— 文件
+          # "明明写出来了"却读不到,于是悄悄退回自动 changelog(所有步骤还都是
+          # 绿的)。现在搬到了 ubuntu,这个坑没了,但相对路径依然是对的写法。
           f="packaging/notes/${GITHUB_REF_NAME}.md"
           if [ -f "$f" ]; then
             title=$(head -1 "$f" | sed 's/^#* *//')
@@ -112,22 +170,31 @@ jobs:
       #
       # 为什么换掉 softprops/action-gh-release:它在**创建**Release 时认
       # body_path,在**更新已存在的**那条路上却不认 —— 正文原样保留。而重打
-      # 一个 tag(修了 CI 再发一次,这一版就干了四回)走的正是更新那条路。
-      # 表现是所有步骤全绿、Release 的配文却一直是旧的,没有任何一处报错。
+      # 一个 tag(修了 CI 再发一次,v3.0.0 那一版就干了四回)走的正是更新那条
+      # 路。表现是所有步骤全绿、Release 的配文却一直是旧的,没有任何一处报错。
       #
       # gh 的每一步做什么写在脸上,出问题也看得见。
       - name: publish the release
-        if: github.ref_type == 'tag'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TITLE: ${{ steps.notes.outputs.title }}
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          zip=dist/NEU-Helper-win-x64.zip
+          mapfile -t zips < <(find dl -name '*.zip' | sort)
           echo "title: $TITLE"
           echo "body:  $(wc -c < release-body.md) bytes"
+          echo "zips:  ${zips[*]}"
+          # **Windows 那个包必须在。** macOS 那一档允许缺(它的 job 是
+          # continue-on-error 的),但一个 Release 里连 win 的包都没有的话,
+          # 绝大多数人的「检查更新」就等于坏了 —— 宁可让这次发布失败。
+          if ! printf '%s\n' "${zips[@]}" | grep -q 'NEU-Helper-win-x64\.zip$'; then
+            echo "::error::no Windows zip among the artifacts"
+            exit 1
+          fi
+          if ! printf '%s\n' "${zips[@]}" | grep -q 'NEU-Helper-mac-'; then
+            echo "::warning::no macOS zip - that build must have failed"
+          fi
           if gh release view "$tag" >/dev/null 2>&1; then
             # **--draft=false 不能省。** 删掉一个 tag,GitHub 会把它那个已发布的
             # Release 转成草稿(不是删掉)。重打 tag 之后走到这一支,不显式发布
@@ -136,13 +203,13 @@ jobs:
             echo "release exists -> updating"
             gh release edit "$tag" --title "$TITLE" --notes-file release-body.md \
                                    --draft=false --prerelease=false --latest
-            gh release upload "$tag" "$zip" --clobber
+            gh release upload "$tag" "${zips[@]}" --clobber
           else
             echo "creating the release"
-            gh release create "$tag" --title "$TITLE" --notes-file release-body.md "$zip"
+            gh release create "$tag" --title "$TITLE" --notes-file release-body.md "${zips[@]}"
           fi
           # 发完回头读一遍:正文写进去了吗、是不是还草稿着、包挂上了吗。
-          # 这一版在"所有步骤全绿而线上不对"上栽了三次,不自己验就还会有第四次。
+          # v3.0.0 在"所有步骤全绿而线上不对"上栽了三次,不自己验就还会有第四次。
           got=$(gh release view "$tag" --json isDraft,body,assets \
                   --jq '"\(.isDraft) \(.body|length) \(.assets|length)"')
           echo "isDraft / body chars / assets = $got"

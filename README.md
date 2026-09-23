@@ -7,7 +7,7 @@
 默认 Canvas 实例是 `https://northeastern.instructure.com`，也可以改成其他 Canvas 实例。
 
 - Windows 10 / 11：可直接使用打包版
-- macOS：支持源码运行，也可以在 Mac 上自行构建 `.app`
+- macOS：Apple 芯片有预构建的 `.app`（**未在真机验证过**，见下），也可以源码运行或自行构建
 - Canvas 数据：只读
 - AI：通过 Claude Code CLI
 - UI：本地运行，不需要部署服务器
@@ -485,13 +485,29 @@ python3 app.py
 
 ### macOS 打包
 
-目前 Release 没有预构建的 macOS 包，需要在 Mac 上构建：
+Release 里有一个 Apple 芯片（arm64）的包：`NEU-Helper-mac-arm64.zip`，由 CI 在
+macOS runner 上构建。
+
+**它没有在真机上运行验证过，也没有签名。** 作者手上只有 Windows，能做的只是
+代码层核对加逻辑自检。所以：
+
+- 第一次打开要右键 →「打开」，或者去「系统设置 → 隐私与安全性」放行一次
+  （未签名应用的常规步骤，`README.txt` 里也写了）
+- 万一它起不来，请开 issue 贴上 `NEU Helper.app/Contents/MacOS/data/app.log`
+- **Intel Mac 用不了这个包** —— PyInstaller 冻的是构建机的解释器和原生库，
+  换架构就跑不起来
+
+自己构建（Intel Mac 必须这样，或者你想要一个验证过的包）：
 
 ```bash
 ./packaging/build_mac.sh
 ```
 
-产物会放在 `dist/`。PyInstaller 的原生依赖与构建机器的平台和架构相关，所以 macOS 包不能在 Windows 上交叉构建。
+产物放在 `dist/NEU-Helper-mac-<arch>.zip`。同样的道理，macOS 包不能在 Windows
+上交叉构建。
+
+另外 macOS 的**打包版不会自动更新** —— 替换 `.app` 的流程没法在 Windows 上
+验证，所以点「更新」只会打开下载页，让你自己换。源码版没这个限制。
 
 ---
 
@@ -863,7 +879,7 @@ python selfcheck.py
 
 Windows `v1.0.0` 打包版已经进行过实际运行验证，包括窗口、悬浮球、本地后端、MCP 和安装流程。
 
-macOS 目前主要完成代码层和逻辑自检，真实 AppKit 窗口层级、文字渲染和交互手感仍需要在不同 Mac 设备上继续验证。
+macOS 目前主要完成代码层和逻辑自检，真实 AppKit 窗口层级、文字渲染和交互手感仍需要在不同 Mac 设备上继续验证。Release 里那个 arm64 包是 CI 产物，**没有人在真机上打开过它**。
 
 ---
 
