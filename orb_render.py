@@ -71,11 +71,9 @@ NEU = {
     "shadow_a": 0.46,
 }
 
-# 按名字挑的配色。空字符串 = 按 dark 在 LIGHT / DARK 之间选。
-# **用模块级开关而不是加参数**:两个宿主(orb_win32 / orb_cocoa)只知道
-# "现在是不是深色",不知道主题叫什么名字,而它们各有一条画图的路径 ——
-# 与其在三处签名上都挂一个参数,不如让 server 在偏好变化时把这儿拨一下。
-# 海边:浅水的绿松石配一点珊瑚橘,玻璃本身偏暖白 —— 像阳光下的水珠
+# 海边:浅水的绿松石配一点珊瑚橘,玻璃本身偏暖白 —— 像阳光下的水珠。
+# 球里那半球水是另外画的(见 render_ball 里的 water 那一段),这几个值管的
+# 是玻璃壳本身;两团流转的光在水面**之上**,转起来像海上的日头。
 BEACH = {
     "glass": (0xFF, 0xFA, 0xF0),
     "core_a": 0.17,
@@ -87,10 +85,10 @@ BEACH = {
     "shadow": (0x0D, 0x5A, 0x64),
     "shadow_a": 0.24,
 }
-# 像素:这一档要的不是"玻璃球",是一颗**实心的彩球**。
-# core_a 拉到接近 1、rim_a 拉满、高光压到很低 —— 透明感和柔和高光正是
-# 像素画风的反面。真正的方块感做不到(球的形状是 render_ball 算出来的圆),
-# 但"不透明 + 硬边 + 单色"已经足够和玻璃那套区分开。
+# 像素:这一档**根本不画球**,画的是一个草方块(render_block)。
+# 所以下面这几个值平时用不到 —— 它留在这儿只为一件事:PALETTES 是 set_theme
+# 认名字的那张表,"pixel" 不在里面就会被当成无效名字、退回默认档,方块也就
+# 永远画不出来。值本身按"实心红球"配着,万一哪天分流没走到也不至于是空白。
 PIXEL = {
     "glass": (0xD1, 0x3B, 0x3B),
     "core_a": 0.94,
@@ -103,6 +101,13 @@ PIXEL = {
     "shadow_a": 0.55,
 }
 
+# 按名字挑的配色。空字符串 = 按 dark 在 LIGHT / DARK 之间选。
+# **用模块级开关而不是加参数**:两个宿主(orb_win32 / orb_cocoa)只知道
+# "现在是不是深色",不知道主题叫什么名字,而它们各有一条画图的路径 ——
+# 与其在三处签名上都挂一个参数,不如让 server 在偏好变化时把这儿拨一下。
+#
+# 这张表同时是**合法主题名的清单**(见 set_theme),所以 pixel 也得在里面,
+# 哪怕它走的是另一条画法。
 PALETTES = {"neu": NEU, "beach": BEACH, "pixel": PIXEL}
 THEME = ""
 
@@ -126,6 +131,117 @@ def canvas_size(diameter: int, pad: int) -> int:
     return diameter + pad * 2
 
 
+# 水面起伏的幅度(球半径的比例)。再大就拍到球壁上了
+WAVE_AMP = 0.085
+
+
+def _hash01(i: int, j: int) -> float:
+    """按格子给一个稳定的 0~1。
+
+    **必须稳定** —— 方块的杂色要是每帧都重摇,那就不是泥土纹理,是雪花屏。
+    所以不用 random,用坐标哈希。
+    """
+    n = (i * 73856093) ^ (j * 19349663)
+    n = (n ^ (n >> 13)) & 0x7FFFFFFF
+    return ((n * 1274126177) & 0x7FFFFFFF) / 2147483647.0
+
+
+# 我的世界草方块的三个面。每个面两档色,靠格子哈希随机挑,凑出泥土的颗粒感。
+# 左右两面亮度不同 —— 立体感全靠这个,不是靠描边
+_TOP = ((0x7C, 0xB3, 0x42), (0x6A, 0xA0, 0x35))          # 草(顶面)
+_LEFT = ((0x7A, 0x5A, 0x3A), (0x6B, 0x4E, 0x31))         # 泥土(左面,背光)
+_RIGHT = ((0x96, 0x70, 0x48), (0x86, 0x63, 0x3E))        # 泥土(右面,受光)
+_GRASS_L = ((0x5F, 0x8F, 0x33), (0x54, 0x7F, 0x2C))      # 侧面顶上那圈草沿
+_GRASS_R = ((0x74, 0xA8, 0x3E), (0x67, 0x97, 0x36))
+
+
+def render_block(f, diameter: int, pad: int, scale: float = 1.0,
+                 bright: float = 1.0):
+    """画一个等距的草方块(我的世界那个)。
+
+    **和玻璃球是两套东西。** 球那套的灵魂是透明、柔光、抗锯齿;方块要的正相反 ——
+    不透明、硬边、看得见像素。所以不复用 render_ball,单开一个。
+
+    只有外轮廓做抗锯齿(否则贴在桌面上边缘是锯齿状的毛刺,那不叫像素风叫没画完),
+    内部一律按格子取色,一个渐变都没有。
+
+    投影也换成方的:像素游戏里的影子就是底下垫一块深色,不是柔光。
+    """
+    w, h = f.w, f.h
+    # 留一点余量给投影
+    a = diameter * 0.5 * scale * 0.94
+    if a < 3:
+        return f
+    cx, cy = w * 0.5, h * 0.5
+    hh = a * 0.5                       # 顶面菱形的半高(2:1 等距)
+    # 侧面高度。0.66 那版看着是块砖不是方块 —— 等距立方体的侧面应该和顶面
+    # 菱形的**全高**差不多。总高 2*hh + sh = 1.88a,还在画布里
+    sh = a * 0.88
+    # 一个"大像素"多少个真实像素。16 格是方块贴图的原始分辨率
+    cell = max(1.0, (a * 2.0) / 16.0)
+
+    top_c = cy - sh * 0.5              # 顶面菱形的中心
+    grass_lip = sh * 0.22              # 侧面顶上那圈草沿有多厚
+
+    for y in range(h):
+        fy = y + 0.5
+        row = y * w
+        for x in range(w):
+            fx = x + 0.5
+            px, py = fx - cx, fy - cy
+            # 格子坐标:同一格里的所有像素取同一个色,这就是"像素感"的来源
+            gi = int(math.floor((px + a) / cell))
+            gj = int(math.floor((py + a) / cell))
+
+            col = None
+            # ── 顶面:以 top_c 为中心的菱形
+            td = abs(px) / a + abs(py - (top_c - cy)) / hh
+            if td <= 1.0:
+                pair = _TOP
+                # 菱形边缘一圈压暗,草皮才有厚度
+                if td > 0.88:
+                    pair = (_TOP[1], _TOP[1])
+                col = pair[0] if _hash01(gi, gj) < 0.55 else pair[1]
+            else:
+                # ── 侧面:两块平行四边形。给定 x,顶边斜着走
+                if px <= 0:
+                    edge = (top_c - cy) + hh * (px + a) / a
+                    inside = -a <= px <= 0
+                    pair, gp = _LEFT, _GRASS_L
+                else:
+                    edge = (top_c - cy) + hh * (a - px) / a
+                    inside = 0 <= px <= a
+                    pair, gp = _RIGHT, _GRASS_R
+                if inside and edge <= py <= edge + sh:
+                    # 顶上那圈是草沿,下面是泥土。草沿的下边缘故意做成锯齿 ——
+                    # 我的世界的草土交界本来就是一格一格参差的
+                    lip = grass_lip * (0.75 + 0.5 * _hash01(gi, 777))
+                    if py - edge <= lip:
+                        col = gp[0] if _hash01(gi, gj) < 0.6 else gp[1]
+                    else:
+                        col = pair[0] if _hash01(gi, gj) < 0.5 else pair[1]
+
+            if col is None:
+                # ── 方块外面:一块方投影,垫在右下
+                sx, syy = px - a * 0.14, py - a * 0.16
+                if (abs(sx) / a + abs(syy - (top_c - cy)) / hh <= 1.0
+                        or (abs(sx) <= a and
+                            (top_c - cy) + hh * (a - abs(sx)) / a <= syy
+                            <= (top_c - cy) + hh * (a - abs(sx)) / a + sh)):
+                    f.px[row + x] = (0x66 << 24)      # 预乘:纯黑 40% 不透明
+                else:
+                    f.px[row + x] = 0
+                continue
+
+            r8, g8, b8 = col
+            if bright != 1.0:
+                r8 = int(_clamp(r8 * bright, 0, 255))
+                g8 = int(_clamp(g8 * bright, 0, 255))
+                b8 = int(_clamp(b8 * bright, 0, 255))
+            f.px[row + x] = (0xFF << 24) | (r8 << 16) | (g8 << 8) | b8
+    return f
+
+
 def render_ball(f, diameter: int, pad: int, dark: bool, scale: float = 1.0,
                 phase: float = 0.0, bright: float = 1.0):
     """把一颗透明玻璃泡画进画布 f(预乘 alpha 的 BGRA)。
@@ -137,11 +253,20 @@ def render_ball(f, diameter: int, pad: int, dark: bool, scale: float = 1.0,
     alpha 是逐像素算出来的:球心低(能透到桌面)、边缘高(轮廓立得住)、
     光晕走过的地方再加一点(看起来像里面有东西在流)。
     """
+    # 像素那一档根本不是球,是个方块 —— 单独一套画法,提前分流
+    if THEME == "pixel":
+        return render_block(f, diameter, pad, scale, bright)
+
     pal = palette(dark)
     w, h = f.w, f.h
     r = diameter * 0.5 * scale
     if r < 2:
         return f
+    # 海边:球里那半球水。wave_base 略高于球心(-0.06)= 装到六成满,
+    # 空一点才看得出是个"球里有水",装满就只是一颗蓝球了
+    water = THEME == "beach"
+    wave_base = -0.06
+    wave_t = phase * TAU
     cx = cy = w * 0.5
     sy = cy + diameter * 0.06            # 投影往下偏一点,球才像"浮"着
     spread = max(1.0, pad * 0.40)
@@ -206,6 +331,36 @@ def render_ball(f, diameter: int, pad: int, dark: bool, scale: float = 1.0,
                         cg += (lg - cg) * min(1.0, k * 1.5)
                         cb += (lb - cb) * min(1.0, k * 1.5)
                         a += k * 0.55
+
+                # ── 海边那一档:球里装着半球水,水面是会晃的浪
+                #
+                # 这一层**加在玻璃里、镜面高光下面** —— 顺序错了就成了"水面
+                # 浮着一块白斑",而不是"隔着玻璃看见里面的水"。
+                # 两条正弦叠加(频率 3.1 和 6.7)而不是一条:单条正弦晃起来像
+                # 钟摆,叠一条快的才有"水在荡"的乱劲。
+                if water:
+                    surf = (wave_base
+                            + WAVE_AMP * math.sin(nx * 3.1 + wave_t)
+                            + WAVE_AMP * 0.45 * math.sin(nx * 6.7 - wave_t * 1.7))
+                    if ny > surf:
+                        depth = _clamp((ny - surf) / 1.25)
+                        # 越深越暗越蓝,浅处偏绿松石
+                        tr = 30 + (8 - 30) * depth
+                        tg = 200 + (92 - 200) * depth
+                        tb = 212 + (156 - 212) * depth
+                        m = 0.88
+                        cr += (tr - cr) * m
+                        cg += (tg - cg) * m
+                        cb += (tb - cb) * m
+                        a = max(a, 0.58 + 0.34 * depth)
+                    # 水面那道白沫。上沿比下沿薄,看着才像光打在浪尖上
+                    d_surf = ny - surf
+                    if -0.030 < d_surf < 0.055:
+                        fk = 1.0 - abs(d_surf) / 0.055
+                        cr += (255 - cr) * fk * 0.85
+                        cg += (255 - cg) * fk * 0.85
+                        cb += (255 - cb) * fk * 0.85
+                        a = max(a, 0.52 + 0.40 * fk)
 
                 # 左上那块强高光:玻璃的镜面反射,小而亮
                 hx, hy = nx + 0.40, ny + 0.46
