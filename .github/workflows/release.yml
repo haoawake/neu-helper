@@ -66,9 +66,39 @@ jobs:
           name: NEU-Helper-win-x64
           path: dist/NEU-Helper-win-x64.zip
 
+      # Hand-written release notes live in packaging/notes/<tag>.md. They matter
+      # more than they look: updater.py pulls the release body into the app and
+      # shows it behind the "what changed" button, so an empty body means the
+      # user who just updated is told nothing.
+      #
+      # First line of the file is the release title (drop the leading "# ").
+      # No file -> fall back to the auto-generated changelog, which is better
+      # than nothing but should be the exception.
+      - name: read the release notes
+        if: github.ref_type == 'tag'
+        id: notes
+        shell: bash
+        run: |
+          f="packaging/notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then
+            head -1 "$f" | sed 's/^#* *//' > /tmp/title.txt
+            tail -n +2 "$f" > /tmp/body.md
+            echo "title=$(cat /tmp/title.txt)" >> "$GITHUB_OUTPUT"
+            echo "body=/tmp/body.md" >> "$GITHUB_OUTPUT"
+            echo "found notes: $f"
+          else
+            echo "::warning::no packaging/notes/${GITHUB_REF_NAME}.md - falling back to the auto changelog"
+            echo "title=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            : > /tmp/body.md
+            echo "body=/tmp/body.md" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: publish the release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/NEU-Helper-win-x64.zip
+          name: ${{ steps.notes.outputs.title }}
+          body_path: ${{ steps.notes.outputs.body }}
+          # 生成的 changelog 接在手写正文后面,两样都留着
           generate_release_notes: true
