@@ -67,10 +67,30 @@ import platform_id
 import version as ver
 from desktop import NO_WINDOW as _NO_WINDOW   # 起子进程不闪黑框
 
-# 检查更新的间隔。**不要更频繁** —— GitHub 对未认证请求是每小时 60 次,
-# 而且这事一天知道一次就够了
-CHECK_EVERY = 6 * 3600
+# 每天几点查一次更新(本机时间)。和每日简报、邮件简报同一个作息 ——
+# 提醒的时机应该是可预期的,而不是"开机之后每 6 小时一次"那样落在任意时刻。
+DAILY_HOUR = 9
+# 兼容用:外面还有没有拿它当兜底间隔的地方。发版频率远低于一天一次,
+# 查得再勤也只是多给 GitHub 送几次 IP
+CHECK_EVERY = 24 * 3600
 TIMEOUT = 20
+
+
+def until_daily(hour: int, now: float | None = None) -> float:
+    """距离下一个 `hour:00`(本机时间)还有多少秒。
+
+    **至少返回 60 秒。** 正好在整点上算出来会是 0 或者极小的数,
+    那样调用方的 `while True: ...; sleep(until_daily())` 会在那一分钟里
+    空转几百次。夏令时切换那天也靠这个兜底:算出负数一律按一分钟算,
+    下一轮再重新算,最多晚一分钟,不会卡死。
+    """
+    import datetime as _dt
+    t = _dt.datetime.fromtimestamp(now) if now else _dt.datetime.now()
+    nxt = t.replace(hour=int(hour) % 24, minute=0, second=0, microsecond=0)
+    if nxt <= t:
+        nxt += _dt.timedelta(days=1)
+    return max(60.0, (nxt - t).total_seconds())
+
 
 # 装好之后**绝对不能被更新覆盖**的东西 —— 这些是"你的",不是"程序的"。
 # zip 里本来就没有它们,这里是第二道闸。

@@ -453,6 +453,29 @@
   </div>
 </div>
 
+<!-- 发现新版本时弹这个。**居中、模态** —— 右下角那条弹窗和学业页顶上那条
+     横幅都可能被忽略掉(一个几秒就没、一个在另一个子页面上),而"你装的这份
+     代码旧了"是应该当面说一次的事。一个版本只弹一次。 -->
+<div class="sheet-backdrop" id="updSheet" hidden>
+  <div class="sheet sheet-narrow" role="dialog" aria-modal="true"
+       aria-labelledby="updSheetTitle">
+    <div class="sheet-head">
+      <h3 id="updSheetTitle">有新版本</h3>
+      <button class="icon-btn" id="btnUpdSheetX" title="关闭">
+        <span aria-hidden="true">✕</span><span class="sr">关闭</span>
+      </button>
+    </div>
+    <div class="sheet-meta" id="updSheetMeta"></div>
+    <div class="sheet-body" id="updSheetBody"></div>
+    <div class="sheet-foot">
+      <button class="btn" id="btnUpdSheetGo">立刻更新</button>
+      <button class="btn btn-quiet" id="btnUpdSheetLater">稍后手动更新</button>
+      <span class="sheet-foot-spacer"></span>
+      <button class="link-btn" id="btnUpdSheetSkip">跳过这个版本</button>
+    </div>
+  </div>
+</div>
+
 <!-- 课表条目:改一条 / 加一条 -->
 <div class="sheet-backdrop" id="weekSheet" hidden>
   <div class="sheet sheet-narrow" role="dialog" aria-modal="true"

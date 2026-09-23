@@ -246,6 +246,15 @@ const FRAGS = [
    'Marked $1; some accounts failed: '],
 
   [/^装在 /g, 'Installed at '],
+  // 更新对话框里那句「下载并替换…你的数据都不动」。中间夹着包的大小,
+  // 整句对不上表,只能按片段换
+  [/下载并替换当前版本\(约 (\d+) MB\),装好自动重启。/g,
+   'Download and replace this version (about $1 MB), then restart. '],
+  [/下载并替换当前版本,装好自动重启。/g,
+   'Download and replace this version, then restart. '],
+  [/你的邮件、对话、课件、设置都不动。/g,
+   'Your mail, chats, course files and settings are untouched.'],
+
 
   /* 日程 */
   [/现在 (\d+:\d+)/g, 'Now $1'],
@@ -995,6 +1004,16 @@ const EN = {
     'One-time codes, login codes, magic links',
   '机器自动发的状态、告警、构建结果、日志':
     'Machine-generated status, alerts, build results, logs',
+
+  /* 发现新版本时那个居中对话框 */
+  '有新版本': 'An update is available',
+  '立刻更新': 'Update now',
+  '稍后手动更新': 'Later, I will do it myself',
+  '跳过这个版本': 'Skip this version',
+  '(这一版没写说明)': '(no notes for this version)',
+  '取最新代码、快进、自动重启。你的邮件、对话、课件、设置都不动。':
+    'Fetch the latest code, fast-forward, restart automatically. Your mail, '
+    + 'chats, course files and settings are untouched.',
 
   /* 「盯着 N 封」那个开关 */
   '· 盯着的(已清空)': '· Watching (none left)',

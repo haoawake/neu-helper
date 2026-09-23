@@ -1007,16 +1007,27 @@ class Backend:
                     body, go="update", force=True)
 
     def start_update_watch(self) -> None:
-        """开机查一次(等 40 秒,别和启动抢),之后每 CHECK_EVERY 一次。"""
+        """启动时查一次,之后每天 09:00 查一次。
+
+        原来是"启动 + 每 6 小时"。改成钉在每天固定一个点上,理由有两条:
+
+        · **提醒的时机应该可预期。** 每 6 小时一次意味着提醒会落在一天里的
+          任意时刻(包括你正在写作业的时候),而且开机时间不同、每台机器
+          还不一样。固定 09:00 和每日简报、邮件简报是同一个作息
+        · 发版频率远低于一天四次,多查的那几次除了给 GitHub 送 IP 没有别的
+          用处(未认证请求每小时 60 次的额度也是共用的)
+
+        启动那次留 20 秒 —— 让窗口、悬浮球、本地服务先起来,别和它们抢。
+        """
         def loop():
-            time.sleep(40)
+            time.sleep(20)
             while True:
                 try:
                     self.check_update()
                 except Exception as exc:           # noqa: BLE001
                     print(f"[update] {type(exc).__name__}: {exc}",
                           file=sys.stderr, flush=True)
-                time.sleep(updater.CHECK_EVERY)
+                time.sleep(updater.until_daily(updater.DAILY_HOUR))
         threading.Thread(target=loop, daemon=True, name="updatewatch").start()
 
     def notify(self, title: str, body: str, go: str = "",
@@ -1969,6 +1980,10 @@ DEFAULT_PREFS = {
     "updateToast": True,
     # 点过「跳过这个版本」的那个版本号 —— 它再也不会提醒
     "skipVersion": "",
+    # 居中那个更新对话框**已经为哪个版本弹过**了。
+    # 记进偏好而不是内存:模态比横幅打扰得多,一个版本只该拦你一次,
+    # 重开应用也不再拦(横幅一直挂着,想更新随时点得到)
+    "updSheetSeen": "",
     # auto | light | dark | neu | beach | pixel。
     # 后三个不只是换色:neu 是深色皮,beach/pixel 连圆角、投影、缓动、
     # 字体一起换(见 gui/app.css 里那两段)

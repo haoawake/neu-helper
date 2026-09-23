@@ -1609,6 +1609,22 @@ a.md-link {
   color: var(--text-secondary);
 }
 .sheet-foot { display: flex; gap: 8px; padding: 13px 18px; border-top: 1px solid var(--hairline); }
+.sheet-foot { align-items: center; }
+.sheet-foot-spacer { flex: 1 1 auto; }
+
+/* 更新对话框:一句「当前 -> 最新」,下面是这几版改了什么(可滚) */
+.upd-jump { font-size: 15px; font-weight: 650; }
+.upd-jump .to { color: var(--accent-ink); }
+#updSheetBody { max-height: 46vh; overflow: auto; }
+.upd-note-h {
+  margin: 12px 0 4px; font-size: 12px; font-weight: 650;
+  color: var(--text-muted); letter-spacing: .04em;
+}
+.upd-note-h:first-child { margin-top: 0; }
+.upd-note-b {
+  font-size: 12.5px; line-height: 1.55; color: var(--text-secondary);
+  white-space: pre-wrap; word-break: break-word;
+}
 
 /* 合并进一条日程的那几封邮件 */
 .wf-mails {

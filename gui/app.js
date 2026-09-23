@@ -3298,6 +3298,68 @@ function renderFailedUpdate(f) {
   bar.title = f.log ? '更新日志(data/update.log)最后几行:\n' + f.log : '';
 }
 
+/* ── 发现新版本时那个居中对话框 ──
+
+   右下角那条弹窗几秒就没了,学业页顶上那条横幅可能挂在你没在看的子页面上。
+   "你装的这份代码旧了"值得当面说一次,所以再加一道模态。
+
+   三道闸和后端 _tell_update 是同一套口径,免得两边各弹各的:
+     · 只对**发了 Release** 的版本弹(源码版的新提交交给横幅)
+     · 一个版本只弹一次(记在 prefs.updSheetSeen,重开也不再弹 ——
+       模态比横幅打扰得多,不能每次开机都拦一下)
+     · 点过「跳过这个版本」的,那个版本再也不弹
+   设置里关掉「有新版本时提醒」(updateToast)的话,这个也一起不弹。 */
+function maybeUpdSheet(info) {
+  const i = info || {};
+  const latest = String(i.latest || '');
+  if (!(i.newer && latest)) return;
+  if (state.prefs.updateToast === false) return;
+  if (latest === String(state.prefs.skipVersion || '')) return;
+  if (latest === String(state.prefs.updSheetSeen || '')) return;
+  // 正在更新/正在重启的时候别拦路
+  const ph = (state.updJob || {}).phase;
+  if (ph && ph !== 'idle' && ph !== 'error') return;
+  if (!$('prefsBackdrop').hidden || !$('sheetBackdrop').hidden) return;
+  savePrefs({ updSheetSeen: latest });
+  openUpdSheet(i);
+}
+
+function openUpdSheet(i) {
+  const cur = i.current || state.updVersion || '';
+  $('updSheetMeta').textContent = '';
+  const jump = el('div', 'upd-jump');
+  jump.appendChild(el('span', null, `v${cur}`));
+  jump.appendChild(el('span', null, ' → '));
+  jump.appendChild(el('span', 'to', `v${i.latest}`));
+  if (i.published) jump.appendChild(el('span', 'muted', `(${i.published})`));
+  $('updSheetMeta').appendChild(jump);
+  // 原来这两句在 window.confirm 里。对话框接管了那次确认,话也得跟着搬过来 ——
+  // 「有多大、会不会动我的东西」是点「立刻更新」之前唯一要知道的事
+  const mb = Math.round((i.size || 0) / 1048576);
+  $('updSheetMeta').appendChild(el('div', 'muted',
+    (state.updKind === 'git'
+      ? '取最新代码、快进、自动重启。'
+      : `下载并替换当前版本${mb ? `(约 ${mb} MB)` : ''},装好自动重启。`)
+    + '你的邮件、对话、课件、设置都不动。'));
+
+  // 落后好几版就把每一版的说明都列出来 —— 中间那几版做了什么同样该看到
+  const box = $('updSheetBody');
+  box.textContent = '';
+  const hist = (i.history || []).length ? i.history
+    : [{ version: i.latest, notes: i.notes || '' }];
+  hist.forEach((h) => {
+    box.appendChild(el('div', 'upd-note-h', `v${h.version}`
+      + (h.date ? ` · ${h.date}` : '')));
+    box.appendChild(el('div', 'upd-note-b',
+      (h.notes || '').trim() || '(这一版没写说明)'));
+  });
+  $('updSheet').hidden = false;
+}
+
+function closeUpdSheet() {
+  $('updSheet').hidden = true;
+}
+
 /* 「跳过这个版本」记在 prefs 里,重开还算数。源码版的提交数每次 fetch
    都在变,记不住也不该记 —— 那种只在这一次会话里收起来。 */
 function skipKey() {
@@ -3395,6 +3457,7 @@ async function loadUpdate() {
     state.updWhere = d.where || '';
     renderFailedUpdate(d.failed_update);
     renderUpdate(d.info || {}, d.job || {});
+    maybeUpdSheet(d.info || {});
     if (!(d.info || {}).latest) setUpdState(`当前 v${d.version}`);
 
   } catch (e) { /* 查不到就算了,不是错误 */ }
@@ -3418,9 +3481,12 @@ async function checkUpdate() {
   }
 }
 
-async function applyUpdate() {
+async function applyUpdate(confirmed) {
   const i = state.upd || {};
   const kind = state.updKind;
+  // confirmed = 调用方已经当面问过了(居中那个更新对话框就是在问)——
+  // 再弹一次 confirm 等于让人点两遍同一件事
+  if (confirmed) return runUpdate();
   // 源码版不下 zip,走 git 快进 —— 所以别拿包的大小吓唬人,也别提"替换"
   const ask = kind === 'git'
     ? `更新到 v${i.latest}:取最新代码、快进、自动重启。\n`
@@ -3429,6 +3495,10 @@ async function applyUpdate() {
     : `下载 v${i.latest} 并替换当前版本(约 ${Math.round((i.size || 0) / 1048576)} MB)。\n`
       + '装好会自动重启。你的邮件、对话、课件、设置都不动。\n\n继续吗?';
   if (!window.confirm(ask)) return;
+  return runUpdate();
+}
+
+async function runUpdate() {
   try {
     const r = await apiPost('/api/update/apply', {});
     if (!r.ok && r.error) setUpdState(r.error);
@@ -4963,6 +5033,8 @@ function handleWindowEvent(ev) {
   }
   if (ev.kind === 'update') {
     renderUpdate(ev.info || {}, ev.job || {});
+    // 后端自动查到新版本(启动那次、每天 09:00 那次)走的就是这条推送
+    maybeUpdSheet(ev.info || {});
     return;
   }
   if (ev.kind === 'goto') {
@@ -6320,6 +6392,24 @@ function wireEvents() {
     if (!r.started) setBriefStatus(r.reason);
   });
 
+  // ── 更新对话框 ──
+  $('btnUpdSheetX').addEventListener('click', closeUpdSheet);
+  $('btnUpdSheetLater').addEventListener('click', closeUpdSheet);
+  $('btnUpdSheetGo').addEventListener('click', () => {
+    closeUpdSheet();
+    // 和横幅上那个「更新并重启」同一条路。true = 这个对话框本身就是那次确认
+    applyUpdate(true);
+  });
+  $('btnUpdSheetSkip').addEventListener('click', () => {
+    const v = (state.upd || {}).latest;
+    if (v) savePrefs({ skipVersion: v });
+    closeUpdSheet();
+    renderUpdate(state.upd, state.updJob);
+  });
+  $('updSheet').addEventListener('click', (e) => {
+    if (e.target === $('updSheet')) closeUpdSheet();
+  });
+
   $('btnCloseSheet').addEventListener('click', closeSheet);
   $('sheetBackdrop').addEventListener('click', (e) => {
     if (e.target === $('sheetBackdrop')) closeSheet();
@@ -6332,7 +6422,9 @@ function wireEvents() {
       return;
     }
     if (e.key !== 'Escape') return;
-    if (!$('sheetBackdrop').hidden) closeSheet();
+    // 更新那个模态排在最前面 —— 它盖在所有东西上面
+    if (!$('updSheet').hidden) closeUpdSheet();
+    else if (!$('sheetBackdrop').hidden) closeSheet();
     else if (!$('prefsBackdrop').hidden) closePrefs();
     else if (state.mailOne) closeMailOne();
   });
