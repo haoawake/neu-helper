@@ -1,0 +1,67 @@
+# 打了 v* 的 tag 就构建并发一个 Release。
+#
+# 为什么要有这个:发版原来是在本机跑 packaging\build_win.ps1、再手动把 zip 拖到
+# GitHub 网页上。两个毛病 —— 一是每次都得记着做,忘了的话 tag 在那儿而 Release
+# 是空的,应用里的「检查更新」就永远找不到包;二是构建结果跟着这台机器的
+# Anaconda 环境走,换台机器出来的东西不一定一样。
+#
+# 交给 Actions 之后:打 tag = 出包。用的是 runner 自带的 GITHUB_TOKEN,
+# 不碰任何人的个人凭据。
+#
+# **资产名不能改。** updater.py 按 `NEU-Helper-win-x64.zip` 这个名字找下载地址
+# (见 _asset_name),改了名应用就更新不了 —— build_win.ps1 生成的就是这个名字。
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # 手动也能跑一次,用来验证工作流本身没坏(不发 Release)
+  workflow_dispatch:
+
+permissions:
+  contents: write          # 建 Release 要写权限
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # requests = Canvas API,flask = 本地后端,pywebview = 窗口。
+      # 和 install.ps1 里装的是同一份清单。
+      - name: install deps
+        run: python -m pip install --upgrade pip pyinstaller requests flask pywebview
+
+      # version.py 是版本号唯一的来源。它和 tag 对不上的话,应用里的更新检查会
+      # 永远错在一个方向上("总是最新"或者"总有更新"),而且极难从用户的报告里查出来。
+      # 所以在这儿拦住,别让它发出去。
+      - name: version must match the tag
+        shell: bash
+        run: |
+          ver=$(python -c "import version; print(version.VERSION)")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "version.py = $ver   tag = $tag"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$ver" != "$tag" ]; then
+            echo "::error::version.py says $ver but the tag says $tag"
+            exit 1
+          fi
+
+      - name: build
+        run: powershell -ExecutionPolicy Bypass -File packaging\build_win.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NEU-Helper-win-x64
+          path: dist/NEU-Helper-win-x64.zip
+
+      - name: publish the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NEU-Helper-win-x64.zip
+          generate_release_notes: true
