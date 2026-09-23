@@ -394,14 +394,14 @@ def set_window_alpha(handle: int, alpha: float) -> bool:
     return bool(_main(go))
 
 
-def set_window_icon(handle: int, icon_path: str) -> bool:
+def set_window_icon(handle: int, ico_path: str) -> bool:
     """换 Dock 图标。
 
     和 Windows 不同,**这是整个应用级别的**,不是某个窗口的 —— macOS 的窗口
     没有自己的图标。签名保持一致(收 handle)是为了让 app.py 不用分叉。
     """
     def go():
-        img = NSImage.alloc().initWithContentsOfFile_(icon_path)
+        img = NSImage.alloc().initWithContentsOfFile_(ico_path)
         if img is None:
             return False
         _app().setApplicationIconImage_(img)
@@ -521,27 +521,43 @@ def _ease_in_out(p: float) -> float:
     return 4 * p * p * p if p < 0.5 else 1 - pow(-2 * p + 2, 3) / 2
 
 
-def animate_rect(handle: int, x: int, y: int, w: int, h: int,
-                 duration: float = 0.26, frames: int = 20) -> None:
+def animate_rect(handle: int, tx: int, ty: int, tw: int, th: int,
+                 duration: float = 0.26, frames: int = 20,
+                 alpha_from: float | None = None,
+                 alpha_to: float | None = None) -> None:
     """逐帧 setFrame 到目标矩形。
 
     **刻意不用 `setFrame:display:animate:`。** 那个是同步阻塞的(动画跑完才
     返回)、时长由系统定、而且缓动曲线和 Windows 那边不一样 —— 同一个应用
     在两个系统上手感不同是要避免的。逐帧自己走,曲线和帧数就都对得上。
+
+    `alpha_from` / `alpha_to`:整窗透明度跟着**同一条缓动**一起插值。
+    收球的最后一段要边缩边淡,才和球那边的淡入接得上。
+
+    **这两个参数原来没有,而 server.py 的 collapse() 一直在传** ——
+    于是 macOS 上"收成悬浮球"必然抛 TypeError(在后台线程里,所以表现是
+    点了按钮窗口纹丝不动、也没有任何报错)。签名必须和 native_win32 那份
+    对齐,这是分发层的全部意义。
     """
     left, top, right, bottom = get_rect(handle)
     if not (right - left):
-        set_rect(handle, x, y, w, h)
+        set_rect(handle, tx, ty, tw, th)
         return
     x0, y0, w0, h0 = left, top, right - left, bottom - top
+    fade = alpha_from is not None and alpha_to is not None
     with _ANIM_LOCK:
         for i in range(1, frames + 1):
             t = _ease_in_out(i / frames)
             set_rect(handle,
-                     int(x0 + (x - x0) * t), int(y0 + (y - y0) * t),
-                     int(w0 + (w - w0) * t), int(h0 + (h - h0) * t))
+                     int(x0 + (tx - x0) * t), int(y0 + (ty - y0) * t),
+                     int(w0 + (tw - w0) * t), int(h0 + (th - h0) * t))
+            if fade:
+                set_window_alpha(handle,
+                                 alpha_from + (alpha_to - alpha_from) * t)
             time.sleep(duration / frames)
-        set_rect(handle, x, y, w, h)
+        set_rect(handle, tx, ty, tw, th)
+        if fade:
+            set_window_alpha(handle, alpha_to)
 
 
 def animate_to(handle: int, logical_w: int, logical_h: int,

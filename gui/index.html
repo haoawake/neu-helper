@@ -320,6 +320,18 @@
 <main class="layout layout-mail" id="layoutMail">
 
   <section class="pane pane-data" id="paneMail">
+    <!-- 搜索。**放在最顶上、独占一行** —— 它是这一页用得最频繁的入口,
+         挤进下面那排筛选器里会被一堆下拉框埋掉。
+         搜索是**纯本地**的(索引一次性拿到前端,见 app.js 的 ensureMailIndex),
+         所以敲一个字就有结果,不用等一句话打完 -->
+    <div class="mail-search-row">
+      <span class="mail-search-ico" aria-hidden="true">🔍</span>
+      <input id="mailSearch" class="mail-search" type="text" autocomplete="off"
+             spellcheck="false" placeholder="搜索邮件:发件人、主题、摘要、标签"
+             aria-label="搜索邮件">
+      <button class="mail-search-x" id="mailSearchX" title="清空(Esc)" hidden>✕</button>
+      <span class="muted" id="mailSearchNote"></span>
+    </div>
     <div class="mail-head">
       <div class="mail-title">
         <div class="mail-count" id="mailCount">—</div>
@@ -351,6 +363,9 @@
       </select>
       <select id="mailAccount" class="select" aria-label="选择账号"></select>
       <button class="link-btn" id="btnMailUnread">只看未读</button>
+      <!-- 一键已读。**两步确认** —— 它一次动几百封,而且动的是服务器上的
+           标记,点错了没有撤销 -->
+      <button class="link-btn" id="btnMailSeenAll">全部标已读</button>
       <button class="link-btn" id="btnMailFetch">收取</button>
     </div>
     <!-- 标签行:AI 过目时打上的标签,点一下就只看这一类 -->
@@ -358,6 +373,9 @@
     <div id="mailBanner" class="banner" hidden></div>
     <div class="mail-ai" id="mailAiBar" hidden></div>
     <div id="mailList" class="mail-list"></div>
+    <!-- 搜索结果。和 #mailList 互斥 —— 搜索时忽略其它筛选(在搜"验证码"
+         的人不会希望它还被「只看未读」挡着),所以两套列表不能混在一起 -->
+    <div id="mailSearchList" class="mail-list mail-hits" hidden></div>
     <div class="mail-pager" id="mailPager" hidden></div>
     <!-- 单封视图。和列表互斥,由 #paneMail 上的 .is-one 控制显隐 —— 它只占
          左栏,右栏的对话照常 -->

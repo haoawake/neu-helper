@@ -305,6 +305,64 @@ if not QUICK:
 
     probe("课程列表", _courses)
 
+# ═══════════════════════════════════════════════ 双端签名对账
+
+
+def _dispatch_parity():
+    """两端同名函数的签名必须一样。不一样 = 另一个平台上必然 TypeError。
+
+    **这条是照着一个真实 bug 加的。** `native_cocoa.animate_rect` 少了
+    `alpha_from` / `alpha_to` 两个参数,而 server.py 的 collapse() 一直在传 ——
+    于是 macOS 上"收成悬浮球"必然抛 TypeError。它发生在后台线程里,表现是
+    点了按钮窗口纹丝不动、日志里也看不见,只能靠这种静态对账发现。
+
+    用 ast 静态比,不 import —— 在 Windows 上 import native_cocoa 会失败。
+    第一个参数的名字不比(win32 叫 hwnd、cocoa 叫 handle,调用方都是位置传的)。
+    """
+    import ast
+
+    pairs = [("native_win32.py", "native_cocoa.py"),
+             ("orb_win32.py", "orb_cocoa.py"),
+             ("toast_win32.py", "toast_cocoa.py")]
+
+    def sigs(path):
+        tree = ast.parse((HERE / path).read_text(encoding="utf-8"))
+        out = {}
+
+        def grab(fn, prefix=""):
+            a = fn.args
+            pos = [x.arg for x in a.posonlyargs + a.args if x.arg != "self"]
+            out[prefix + fn.name] = (len(pos), tuple(pos[1:]),
+                                     tuple(sorted(x.arg for x in a.kwonlyargs)),
+                                     bool(a.vararg), bool(a.kwarg))
+
+        for n in tree.body:
+            if isinstance(n, ast.FunctionDef) and not n.name.startswith("_"):
+                grab(n)
+            elif isinstance(n, ast.ClassDef) and not n.name.startswith("_"):
+                for m in n.body:
+                    if isinstance(m, ast.FunctionDef) and (
+                            not m.name.startswith("_") or m.name == "__init__"):
+                        grab(m, n.name + ".")
+        return out
+
+    bad = []
+    n_shared = 0
+    for win, mac in pairs:
+        if not (HERE / win).exists() or not (HERE / mac).exists():
+            continue
+        w, m = sigs(win), sigs(mac)
+        shared = set(w) & set(m)
+        n_shared += len(shared)
+        bad += [f"{win.split('_')[0]}.{k}" for k in sorted(shared) if w[k] != m[k]]
+    return (not bad,
+            f"{n_shared} 个同名函数签名一致" if not bad
+            else "签名不一致:" + "、".join(bad))
+
+
+probe("双端分发层签名对账", _dispatch_parity)
+
+
 # ═══════════════════════════════════════════════ 汇总
 
 bad = [n for n, good, _ in results if not good]

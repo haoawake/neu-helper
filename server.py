@@ -770,13 +770,16 @@ class Backend:
         if sort == "date_asc":
             msgs.sort(key=lambda m: m.get("ts") or "")
         elif sort == "level":
-            # 级别高的在前,同级按时间新的在前。
+            # **"未读还是已读"是第一顺位,级别只在未读里面比。**
             #
-            # **已读的一律按 0 级算。** 看过了就等于知道了 —— 再让它凭级别
-            # 顶在最前面,只会把没看过的挤到下面去,而"按重要程度排"这个动作
-            # 的全部意义就是"先给我看还没处理的"。已读的仍然在列表里,
-            # 只是退到所有未读后面,彼此之间按时间新旧排。
+            # 看过了就等于知道了,所以已读的一律退到所有未读后面 ——
+            # 哪怕它是「要紧」,也比不过一封未读的「普通」。原来是把已读折成
+            # 0 级,那样它还能和未读的「噪音」(也是 0 级)按时间混排,
+            # 于是一封刚到的已读信仍然会插到未读前面。
+            #
+            # 已读之间不再比级别(反正都知道了),按时间新旧排。
             msgs.sort(key=lambda m: (
+                1 if m.get("unread") else 0,
                 (m["rank"] or {}).get("level", 1) if m.get("unread") else 0,
                 m.get("ts") or ""), reverse=True)
         else:
@@ -2180,11 +2183,17 @@ def api_update_apply():
         started = backend.updater.start_git()
         return jsonify({"ok": started, "kind": kind,
                         "job": backend.updater.snapshot()})
-    if kind != "packaged" or platform_id.IS_MAC:
+    # 剩下只有"源码但没有 .git"还得手动 —— 那种情况无从更新起。
+    # **macOS 的打包版不再走这条路**:换 .app 的流程写好了
+    # (updater._apply_update_mac),两个平台现在都是自动的。
+    if kind != "packaged":
         if info.get("page"):
             webbrowser.open(info["page"])
         return jsonify({"ok": False, "opened": True, "kind": kind,
-                        "error": "这种安装方式要手动更新,已经打开下载页"})
+                        "error": applang.tr(
+                            "这种安装方式要手动更新,已经打开下载页",
+                            "This install has to be updated by hand — "
+                            "the download page is open")})
     started = backend.updater.start(info.get("asset") or "",
                                     info.get("latest") or "")
     return jsonify({"ok": started, "kind": kind,
@@ -2461,20 +2470,26 @@ def apply_mode(mode: str) -> dict:
                      animate=bool(prefs.get("anim", True)))
 
         def collapse():
-            # 1. 等页面把内容淡掉(CSS 110ms)。不等的话缩的过程里那串中间布局
-            #    全看在眼里,像抽了一下而不是一个动作
-            time.sleep(0.11)
+            # 1. 等页面把内容淡掉(CSS 45ms)。不等的话缩的过程里那串中间布局
+            #    全看在眼里,像抽了一下而不是一个动作。
+            #
+            # **整套预算从 580ms 压到 280ms**(45 + 165 + 70)。原来那一版
+            # 110/340/130 是照着"看清每一段"调的,可这个动作一天要做几十次 ——
+            # 慢半秒就变成"点了没反应"。三段等比压缩,顺序和观感不变。
+            time.sleep(0.045)
             # 2. 一路收到**球本体**那么大、那么位置。收到 170px 就停、然后让
             #    46px 的球凭空弹出来 —— 那个 6 倍的尺寸断层就是"不丝滑"的来源
             bx, by, bd = orb.ball_rect(int(ox), int(oy))
+            # frames 跟着时长一起减 —— 165ms 里打 26 帧是 6ms 一帧,
+            # SetWindowPos 根本跟不上,白发一半
             native_window.animate_rect(h, bx, by, bd, bd,
-                                       duration=0.34, frames=26,
+                                       duration=0.165, frames=14,
                                        alpha_from=float(prefs["opacity"]),
                                        alpha_to=0.50)
             # 3. 交接:两个窗口此刻完全重合,130ms 交叉淡化。圆角方和圆在这个
             #    尺寸上只差四个角几个像素,淡化里看不出来
             orb.show(int(ox), int(oy), alpha=0)
-            _cross_fade(h, to_orb=True, floor=0.50)
+            _cross_fade(h, to_orb=True, floor=0.50, ms=70, steps=6)
             # 4. 收尾:藏掉主窗口、把整窗 alpha 还原成用户设的值
             native_window.hide(h)
             native_window.set_window_alpha(h, float(prefs["opacity"]))
@@ -2517,7 +2532,7 @@ def apply_mode(mode: str) -> dict:
 
             def grow():
                 # 1. 等页面收到上面那条事件、把内容藏好
-                time.sleep(0.09)
+                time.sleep(0.04)
                 # 2. 主窗口先和球完全重合(球本体那么大、那么位置),全透明地显示
                 bx, by, bd = orb.ball_rect()
                 native_window.set_rect(h, bx, by, bd, bd)
@@ -2525,11 +2540,11 @@ def apply_mode(mode: str) -> dict:
                 native_window.show(h)
                 # 3. 交叉淡化:球淡出、窗口淡入。两者同位置同大小,看起来是
                 #    同一个东西在变
-                _cross_fade(h, to_orb=False, floor=0.50)
+                _cross_fade(h, to_orb=False, floor=0.50, ms=70, steps=6)
                 orb.hide_now()
                 # 4. 从球那么大长到目标尺寸,同时把整窗 alpha 提到用户设的值
                 native_window.animate_rect(h, target[0], target[1], tw, th_,
-                                           duration=0.34, frames=26,
+                                           duration=0.165, frames=14,
                                            alpha_from=0.50,
                                            alpha_to=float(prefs["opacity"]))
                 native_window.set_window_alpha(h, float(prefs["opacity"]))
@@ -2541,11 +2556,11 @@ def apply_mode(mode: str) -> dict:
             threading.Thread(target=grow, daemon=True).start()
         else:
             def resize():
-                # 和收球那条路一样先等页面把内容淡掉(CSS 110ms)。不等的话
+                # 和收球那条路一样先等页面把内容淡掉(CSS 45ms)。不等的话
                 # 三栏重排和窗口形变同时发生,看着就是"整个屏幕先变一次
                 # 再缩小",而不是一个连续的动作
-                time.sleep(0.11)
-                native_window.animate_to(h, w, ht)
+                time.sleep(0.045)
+                native_window.animate_to(h, w, ht, duration=0.165, frames=14)
 
             # 形变放后台线程,HTTP 立刻返回 —— 否则前端要等 260ms 才能换 CSS,
             # 原生窗口和页面内容就对不上了
@@ -2885,6 +2900,105 @@ def api_mail_add_imap():
 def api_mail_remove():
     aid = str((request.get_json(silent=True) or {}).get("id", ""))
     return jsonify({"ok": mailmod.remove_account(aid)})
+
+
+@app.get("/api/mail/index")
+def api_mail_index():
+    """搜索用的索引:**一次拿走全部邮件的可搜字段**,之后搜索不再联网。
+
+    为什么是这个形状,而不是把关键词发给后端筛:
+    输入一个字就要有结果,那就意味着每敲一下键盘发一次请求。本机 loopback
+    一来一回量下来 p50 1.7ms、p90 14ms —— 听着不慢,但那是**空载**;真按住
+    一串字打下去,请求会互相排队,而且 werkzeug 是 HTTP/1.0(每个响应
+    Connection: close),每次都得新建一条 TCP。把索引一次性拿到本地,
+    搜索就变成纯内存过滤:零请求、零等待。
+
+    3000 封的量级下这份 JSON 大约几百 KB,localhost 上一次传完的事。
+    `ver` 变了才需要重新拿(界面自己判断)。
+
+    字段名刻意压成一两个字母 —— 键名在 JSON 里会重复三千遍,
+    `"unread"` 换成 `"u"` 能省掉百来 KB。
+    """
+    prefs = read_prefs()
+    trash_tags = set(prefs.get("mailTrashTags") or [])
+    msgs = backend.rate_messages(backend.mail.all(limit=4000))
+    rows = []
+    for m in msgs:
+        r = m.get("rank") or {}
+        rows.append({
+            "i": m.get("id"),
+            "u": 1 if m.get("unread") else 0,
+            "l": int(r.get("level", 1) or 0),
+            "lb": r.get("label") or "",
+            "ic": r.get("icon") or "",
+            "t": m.get("date_local") or "",
+            "f": m.get("from") or "",
+            "s": m.get("subject") or "",
+            # 摘要没有(还没过目)就拿正文开头顶上 —— 搜"验证码"这种
+            # 词的时候,没过目的那几封同样得搜得到
+            # 截到 180:整份索引的体积主要就是这一项(3000 封的话
+            # 240 和 180 差着两三百 KB)。摘要本来也就一两句话,
+            # 截掉的是长摘要的尾巴,搜得到搜不到几乎不受影响
+            "m": (r.get("summary") or m.get("snippet") or "")[:180],
+            "g": " ".join(r.get("tags") or []),
+            "b": 1 if backend.is_trash(m, trash_tags) else 0,
+            "st": 1 if m.get("star") else 0,
+            "p": m.get("person") or "",
+        })
+    # 列表是 ts 倒序的(mail.all 保证),所以下标就是时间序 ——
+    # 前端排序拿它当同级的 tie-break,不用再传一份 ts
+    return jsonify({"ver": f"{backend.mail.updated()}|{len(rows)}",
+                    "rows": rows})
+
+
+@app.post("/api/mail/seen/all")
+def api_mail_seen_all():
+    """一键已读:把**现在这个箱子里**所有未读的信标成已读。
+
+    两层都要动:服务器上的 `\Seen`,和本地索引。顺序是先服务器再本地 ——
+    反过来的话服务器写失败就成了"界面说已读、邮箱里还是未读"。
+
+    按账号分组批量发 STORE(见 mailbox.imap_set_seen_many):一次登录一条
+    命令搞定一个账号,而不是一封一次。某个账号失败不影响别的账号 ——
+    结果里把失败的原因一起带回去。
+    """
+    d = request.get_json(silent=True) or {}
+    box = d.get("box") or "in"
+    account = d.get("account") or None
+    prefs = read_prefs()
+    trash_tags = set(prefs.get("mailTrashTags") or [])
+    want_trash = box == "trash"
+    msgs = [m for m in backend.rate_messages(
+                backend.mail.all(limit=4000, account=account))
+            if m.get("unread")
+            and backend.is_trash(m, trash_tags) == want_trash]
+    if not msgs:
+        return jsonify({"ok": True, "done": 0, "errors": []})
+
+    by_acc: dict[str, list[str]] = {}
+    for m in msgs:
+        mid = str(m.get("id") or "")
+        if "#" not in mid:
+            continue
+        acc_id, uid = mid.rsplit("#", 1)
+        by_acc.setdefault(acc_id, []).append(uid)
+
+    done_ids, errors = [], []
+    for acc_id, uids in by_acc.items():
+        acc = mailmod.get_account(acc_id)
+        if not acc or not acc.get("password"):
+            errors.append(f"{acc_id}:这个账号已经不在了")
+            continue
+        n, err = mailmod.imap_set_seen_many(acc, uids, True)
+        if err:
+            errors.append(f"{acc.get('label') or acc_id}:{err}")
+            continue
+        done_ids += [f"{acc_id}#{u}" for u in uids[:n]]
+    changed = backend.mail.patch_many(done_ids, {"unread": False})
+    st = backend.mail_fetcher.snapshot()
+    backend.push_mail(st)
+    return jsonify({"ok": not errors, "done": len(changed),
+                    "errors": errors, "state": st})
 
 
 @app.post("/api/mail/seen")

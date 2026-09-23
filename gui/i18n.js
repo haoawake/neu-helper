@@ -238,6 +238,13 @@ const FRAGS = [
   // 不是星期几,换掉会得到「下Mon」
   [/(?<![上下本每整])周([一二三四五六日])/g, (m, w) => WEEK_EN[w] || m],
   [/^截止 /g, 'Due '],
+  // 搜索结果那行计数。三段是拼出来的,所以按片段换
+  [/(\d+) 封匹配/g, '$1 match'],
+  [/,其中 (\d+) 封未读/g, ', $1 unread'],
+  [/\(只列前 (\d+) 条\)/g, ' (showing the first $1)'],
+  [/^标了 (\d+) 封,有账号没成功:/g,
+   'Marked $1; some accounts failed: '],
+
   [/^装在 /g, 'Installed at '],
 
   /* 日程 */
@@ -988,8 +995,27 @@ const EN = {
   '机器自动发的状态、告警、构建结果、日志':
     'Machine-generated status, alerts, build results, logs',
 
+  /* 邮件搜索(顶上那条) */
+  '搜索邮件': 'Search mail',
+  '搜索邮件:发件人、主题、摘要、标签':
+    'Search mail: sender, subject, summary, tags',
+  '清空(Esc)': 'Clear (Esc)',
+  '正在准备索引…': 'Building the index...',
+  '没有匹配的邮件': 'No mail matches',
+  '搜索索引读不到:': 'Could not load the search index: ',
+
+  /* 一键已读 / 每封信上的已读开关 */
+  '全部标已读': 'Mark all read',
+  '确定?再点一次': 'Sure? Click again',
+  '正在标…': 'Marking...',
+  '没有未读的了': 'Nothing unread left',
+  '一键已读没成功:': 'Mark-all-read did not work: ',
+  '标已读': 'Mark read',
+  '打不开那封信:': 'Could not open it: ',
+
   /* 「上次更新没落地」那条横幅 */
   '打开安装目录': 'Open the install folder',
+  '知道了': 'Got it',
   '多半是这一份在压缩包或临时目录里跑,或者那个目录写不进去':
     'Most likely this copy is running from inside the zip or a temp folder, '
     + 'or that folder is not writable',

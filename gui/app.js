@@ -50,6 +50,7 @@ const state = {
   mailSort: 'date_desc',
   mailDay: '',         // 只看某一天(空 = 所有日期)
   mailTag: '',         // 只看某个标签
+  mailQuery: '',       // 顶上那个搜索框里的字(非空 = 正在搜,列表让位给结果)
   mailTagCounts: {},   // 当前这批里每个标签有几封
   mailDays: [],        // 有邮件的日期
   mailAi: null,        // AI 过目的进度
@@ -2356,6 +2357,10 @@ function setPage(page) {
   if (state.page === 'study' && state.tab === 'brief') loadBriefIndex();
   if (state.page === 'mail') {
     loadMail();
+    // **进这一页就把搜索索引拿回来**,不等用户聚焦、更不等第一下按键。
+    // 一百来 KB 的传输和"人决定搜什么"的时间完全重叠,于是第一个字也是
+    // 零等待 —— 实测在这之前,第一下按键要等索引到位,大约半秒
+    ensureMailIndex();
     // 无条件重拉:已经有存档目录的时候也要重算选中项,不然还停在上次翻到那天
     if (state.mailTab === 'brief' || !state.mailBriefIndex.length) loadMailBriefIndex();
     if (!state.mailChatId) loadMailChatIndex().then(() => {
@@ -2472,6 +2477,9 @@ function renderMailState(st) {
 }
 
 function renderMailList() {
+  // 正在搜索:结果列表归 renderMailHits 管,这儿一动就把结果冲掉了
+  // (后台每 3 分钟拉一轮邮件,每轮都会走到这里)
+  if (mailSearching()) { scheduleMailSearch(); return; }
   // 正在看单封的时候后台照常拉邮件,但不能把视图切回列表
   if (state.mailOne) {
     const m = state.mailMsgs.find((x) => x.id === state.mailOne);
@@ -2498,6 +2506,211 @@ function renderMailList() {
     list.appendChild(mailCard(m, i));
   });
   renderMailPager();
+}
+
+/* ═══════════════════════ 邮件搜索 ═══════════════════════
+
+   **敲一个字就有结果,不等你打完一句话。** 做法是把可搜字段一次性拿到前端,
+   之后每次输入都只是一次内存过滤 —— 零请求、零等待。
+
+   为什么不把关键词发给后端筛:那意味着每敲一下键盘一次 HTTP。本机 loopback
+   量下来 p50 1.7ms / p90 14ms,听着不慢,可那是空载;真按住一串字打下去,
+   请求会互相排队,而 werkzeug 是 HTTP/1.0(每个响应 Connection: close),
+   每次还得新建一条 TCP。索引拿到本地就彻底没这回事了。
+
+   三个"别踩"的点:
+
+   - **haystack 只拼一次**,不在每次按键里拼。3000 封 × 每次按键重新
+     toLowerCase 是纯浪费
+   - **渲染要限量**。过滤 3000 条是微秒级的事,把 3000 个 DOM 节点塞进页面
+     才是真卡 —— 所以只画前 HIT_MAX 条,剩下的说一句"还有 N 封"
+   - **一帧只画一次**。按键事件比帧还密,不合并的话一次输入会触发好几次重排
+
+   索引的口径:当前这个箱子(收件箱/垃圾箱)里的全部邮件。**搜索时忽略其它
+   筛选** —— 在搜「验证码」的人不会希望它还被「只看未读」或者某个标签挡着。 */
+
+const HIT_MAX = 200;                  // 最多画这么多条
+const MAIL_IDX = { ver: '', rows: [], hay: [], pending: null };
+
+/* 拿索引。**ver 没变就不重拿** —— 切页、清空再搜都不该重新传一遍几百 KB。 */
+async function ensureMailIndex() {
+  if (MAIL_IDX.rows.length && MAIL_IDX.ver) return true;
+  if (MAIL_IDX.pending) return MAIL_IDX.pending;
+  MAIL_IDX.pending = (async () => {
+    try {
+      const d = await apiGet('/api/mail/index');
+      MAIL_IDX.ver = d.ver || '1';
+      MAIL_IDX.rows = d.rows || [];
+      // haystack:一次拼好,之后每次按键只是在这上面找子串
+      MAIL_IDX.hay = MAIL_IDX.rows.map(
+        (r) => `${r.f} ${r.s} ${r.m} ${r.g} ${r.lb} ${r.p}`.toLowerCase());
+      return true;
+    } catch (e) {
+      showMailBanner('搜索索引读不到:' + ((e && e.message) || e));
+      return false;
+    } finally {
+      MAIL_IDX.pending = null;
+    }
+  })();
+  return MAIL_IDX.pending;
+}
+
+/* 邮件状态变了(收到新信、标了已读)—— 索引就过期了。
+   下次搜索会重新拿。 */
+function invalidateMailIndex() {
+  MAIL_IDX.ver = '';
+  MAIL_IDX.rows = [];
+  MAIL_IDX.hay = [];
+}
+
+/* 只改一封的已读位。比整份重拿便宜得多,而且搜索结果不会闪。 */
+function touchMailIndex(id, patch) {
+  const r = MAIL_IDX.rows.find((x) => x.i === id);
+  if (!r) return;
+  if (patch.unread !== undefined) r.u = patch.unread ? 1 : 0;
+  if (patch.star !== undefined) r.st = patch.star ? 1 : 0;
+}
+
+function mailSearching() {
+  return !!(state.mailQuery || '').trim();
+}
+
+/* 过滤 + 排序。词之间是**与**关系(空格分开),每个词都要出现。 */
+function mailHits(q) {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const wantTrash = state.mailBox === 'trash' ? 1 : 0;
+  const out = [];
+  const rows = MAIL_IDX.rows;
+  const hay = MAIL_IDX.hay;
+  for (let i = 0; i < rows.length; i += 1) {
+    if (rows[i].b !== wantTrash) continue;
+    const h = hay[i];
+    let ok = true;
+    for (let k = 0; k < terms.length; k += 1) {
+      if (h.indexOf(terms[k]) < 0) { ok = false; break; }
+    }
+    if (ok) out.push(i);
+  }
+  // 未读在前;未读之间按级别;其余按时间(下标就是时间序,后端给的是 ts 倒序)。
+  // 和「按重要程度」那个排序同一个口径:已读的一律退到未读后面
+  out.sort((a, b) => {
+    const ra = rows[a];
+    const rb = rows[b];
+    if (ra.u !== rb.u) return rb.u - ra.u;
+    if (ra.u && ra.l !== rb.l) return rb.l - ra.l;
+    return a - b;
+  });
+  return out;
+}
+
+let hitFrame = 0;
+
+/* 输入事件比帧还密 —— 合并到一帧画一次。 */
+function scheduleMailSearch() {
+  if (hitFrame) return;
+  hitFrame = requestAnimationFrame(() => {
+    hitFrame = 0;
+    renderMailHits();
+  });
+}
+
+async function onMailSearchInput(v) {
+  state.mailQuery = v;
+  const on = mailSearching();
+  $('mailSearchX').hidden = !on;
+  if (!on) {
+    $('mailSearchList').hidden = true;
+    $('mailSearchNote').textContent = '';
+    document.body.classList.remove('is-mailsearch');
+    renderMailList();
+    return;
+  }
+  document.body.classList.add('is-mailsearch');
+  $('mailSearchList').hidden = false;
+  // 索引还没到:先说一声,别让人对着空列表以为"没结果"
+  if (!MAIL_IDX.rows.length) {
+    $('mailSearchNote').textContent = '正在准备索引…';
+    const ok = await ensureMailIndex();
+    if (!ok || !mailSearching()) return;
+  }
+  scheduleMailSearch();
+}
+
+function renderMailHits() {
+  const box = $('mailSearchList');
+  const q = (state.mailQuery || '').trim();
+  if (!box || !q) return;
+  const hits = mailHits(q);
+  const note = $('mailSearchNote');
+  const unread = hits.reduce((n, i) => n + MAIL_IDX.rows[i].u, 0);
+  note.textContent = hits.length
+    ? `${hits.length} 封匹配` + (unread ? `,其中 ${unread} 封未读` : '')
+      + (hits.length > HIT_MAX ? `(只列前 ${HIT_MAX} 条)` : '')
+    : '没有匹配的邮件';
+  box.textContent = '';
+  hits.slice(0, HIT_MAX).forEach((i) => box.appendChild(mailHitRow(MAIL_IDX.rows[i])));
+}
+
+/* 结果行。**比列表卡片轻得多** —— 一次可能画两百条,每条再挂标签、链接、
+   附件就卡了。要看全文点一下就进单封视图。 */
+function mailHitRow(r) {
+  const row = el('div', 'mail-hit' + (r.u ? ' is-unread' : ''));
+  const top = el('div', 'mail-hit-top');
+  top.appendChild(el('span', 'mail-hit-from', senderName(r.f)));
+  if (r.lb) {
+    const chip = el('span', 'mail-rank');
+    chip.dataset.lv = String(r.l);
+    if (r.ic) chip.appendChild(el('span', null, r.ic));
+    chip.appendChild(el('span', null, r.lb));
+    top.appendChild(chip);
+  }
+  if (r.st) top.appendChild(el('span', 'mail-hit-star', '★'));
+  top.appendChild(el('span', 'mail-act-spacer'));
+  top.appendChild(el('span', 'mail-date muted', r.t || ''));
+  row.appendChild(top);
+  row.appendChild(el('div', 'mail-hit-subj', r.s || '(无主题)'));
+  if (r.m) row.appendChild(el('div', 'mail-hit-sum muted', r.m));
+  row.addEventListener('click', () => openMailById(r.i));
+  return row;
+}
+
+/* ── 一键已读 ── */
+
+async function markAllSeen() {
+  const btn = $('btnMailSeenAll');
+  // 两步确认:它一次动几百封,而且动的是**服务器上**的标记,没有撤销
+  if (!btn.dataset.armed) {
+    btn.dataset.armed = '1';
+    btn.textContent = '确定?再点一次';
+    btn.classList.add('is-warn');
+    setTimeout(() => {
+      if (!btn.dataset.armed) return;
+      delete btn.dataset.armed;
+      btn.textContent = '全部标已读';
+      btn.classList.remove('is-warn');
+    }, 4000);
+    return;
+  }
+  delete btn.dataset.armed;
+  btn.classList.remove('is-warn');
+  btn.textContent = '正在标…';
+  btn.disabled = true;
+  try {
+    const r = await apiPost('/api/mail/seen/all', {
+      box: state.mailBox, account: state.mailAccount || '',
+    });
+    showMailBanner((r.errors || []).length
+      ? `标了 ${r.done} 封,有账号没成功:${r.errors.join(';')}`
+      : (r.done ? '' : '没有未读的了'));
+    invalidateMailIndex();
+    await loadMail();
+    if (mailSearching()) { await ensureMailIndex(); scheduleMailSearch(); }
+  } catch (e) {
+    showMailBanner('一键已读没成功:' + ((e && e.message) || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '全部标已读';
+  }
 }
 
 /* 一张卡片 = 固定的五段。顺序和留白都是定死的,扫列表的时候眼睛不用重新找。 */
@@ -2599,6 +2812,18 @@ function mailCard(m, i) {
     });
   });
   act.appendChild(ask);
+  // 已读/未读就地切。**每张卡片上都有** —— 原来只有单封视图里那一个,
+  // 想把一封刚扫过的信标回未读得先点进去再退出来。
+  // 标回未读是有用的动作:未读排在所有已读前面(见后端 list_messages),
+  // 标回去就等于"这封我还得回来处理"
+  const rd = el('button', 'link-btn', m.unread ? '标已读' : '标回未读');
+  rd.type = 'button';
+  rd.title = m.unread ? '在邮箱里也标成已读' : '在邮箱里也标回未读';
+  rd.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    setMailSeen(m, !!m.unread);
+  });
+  act.appendChild(rd);
   if (m.web_url) {
     const open = el('button', 'link-btn', '在网页打开');
     open.type = 'button';
@@ -3236,6 +3461,7 @@ function openMailOne(m) {
    失败了就把本地状态退回去、并且把服务器的原话摆出来 ——
    不能这边显示已读、邮箱里还是未读。 */
 async function setMailSeen(m, seen) {
+  touchMailIndex(m.id, { unread: !seen });
   const was = m.unread;
   m.unread = !seen;                      // 先改本地,界面立刻跟上
   if (state.mailOne === m.id) renderMailOne(m);
@@ -3245,9 +3471,11 @@ async function setMailSeen(m, seen) {
       { watching: (state.mail || {}).watching }));
   } catch (e) {
     m.unread = was;
+    touchMailIndex(m.id, { unread: was });   // 索引也得拨回去
     showMailBanner('同步已读失败:' + ((e && e.message) || e));
     if (state.mailOne === m.id) renderMailOne(m);
   }
+  if (mailSearching()) scheduleMailSearch();
 }
 
 function closeMailOne() {
@@ -3933,6 +4161,26 @@ function wireMail() {
     state.mailPage = 1;
     loadMail();
   });
+  // ── 搜索 ──
+  // **input 事件,不是 change/keyup** —— input 是"值变了就来一下",
+  // 输入法上屏、粘贴、点 ✕ 清空全都算,而 keyup 会漏掉中文输入法的上屏
+  const box = $('mailSearch');
+  box.addEventListener('input', (e) => onMailSearchInput(e.target.value));
+  box.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();          // 别让 Esc 顺手把单封视图/面板也关了
+    box.value = '';
+    onMailSearchInput('');
+  });
+  // 聚焦时再兜一次(索引可能因为收到新邮件而失效了)
+  box.addEventListener('focus', () => { ensureMailIndex(); });
+  $('mailSearchX').addEventListener('click', () => {
+    box.value = '';
+    onMailSearchInput('');
+    box.focus();
+  });
+  $('btnMailSeenAll').addEventListener('click', markAllSeen);
+
   $('btnMailUnread').addEventListener('click', () => {
     state.mailUnreadOnly = !state.mailUnreadOnly;
     loadMail();
@@ -4517,8 +4765,11 @@ function handleBriefEvent(ev) {
 
 async function setMode(mode) {
   applyModeClass(mode);
-  // 让浏览器先把淡出这一帧画出去,再让原生窗口开始形变
-  await new Promise((r) => requestAnimationFrame(() => r()));
+  // **不再 await 一帧再发请求。** 原来这儿是
+  //     await new Promise((r) => requestAnimationFrame(r))
+  // 想让淡出先画出来。可那多压一帧(16ms)才开始发请求,而后端自己就先等
+  // 45ms —— 那一帧纯属白等,点下去到窗口开始动之间的空白就是它。
+  // 淡出由 CSS 负责,浏览器该画的时候会画,不用在这儿排队。
   try {
     await apiPost('/api/window/mode', { mode: mode });
   } catch (e) {
@@ -4547,8 +4798,11 @@ let pendingLayout = '';
    再开始缩,人眼读到的是"整个屏幕先变了一次,然后才缩小"。窗口还没动,画面
    已经天翻地覆。
 
-   所以延到 120ms —— 比 is-morphing 那 110ms 的淡出多一点点,重排发生时内容
-   已经是透明的,谁也看不见。关了动画的话没有淡出这回事,立刻换。 */
+   所以延到 55ms —— 比 is-morphing 那 45ms 的淡出多一点点,重排发生时内容
+   已经是透明的,谁也看不见。关了动画的话没有淡出这回事,立刻换。
+
+   **这些数跟着后端的预算走**(server.py 的 collapse / grow / resize):
+   整套形变是 45ms 淡出 + 165ms 形变 + 70ms 交接 = 280ms。改一头记得改另一头。 */
 function flushLayout() {
   clearTimeout(layoutTimer);
   layoutTimer = 0;
@@ -4579,7 +4833,7 @@ function applyModeClass(mode) {
   clearTimeout(layoutTimer);
   if (document.body.dataset.mode === layout
       || document.body.classList.contains('no-anim')) flushLayout();
-  else layoutTimer = setTimeout(flushLayout, 120);
+  else layoutTimer = setTimeout(flushLayout, 55);
   // 收球 / 展开两个方向上页面都要画成球的样子(那 130ms 是两个窗口交叉淡化,
   // 画得越像越看不出换了个窗口),但时机相反:
   //   收 → 延迟 300ms 淡入(先缩小,小了才变成球)
@@ -4589,13 +4843,13 @@ function applyModeClass(mode) {
   document.body.classList.toggle('is-unorbing', !toOrb && wasOrb);
   if (toOrb || wasOrb) driveBallFade(toOrb);
   clearTimeout(morphTimer);
-  // 和后端的时长对齐:收起 110+340+130ms;展开 90+130+340ms
+  // 和后端的时长对齐:收起 45+165+70ms;展开 40+70+165ms
   morphTimer = setTimeout(() => {
     // 兜底:隐藏的窗口里 setTimeout 会被节流,内容淡回来之前布局必须已经排好
     flushLayout();
     document.body.classList.remove('is-morphing');
     document.body.classList.remove('is-unorbing');
-  }, toOrb ? 8000 : 580);
+  }, toOrb ? 8000 : 300);
 }
 
 /* 展开/收起那个按钮的两副面孔。收成球的时候按 chat 算 —— 球里面的页面
@@ -4697,7 +4951,12 @@ function handleWindowEvent(ev) {
   if (ev.kind === 'mail') {
     renderMailState(ev.mail || {});
     // 有新邮件进来就把列表刷一下(在邮箱页的时候)
-    if (state.page === 'mail' && (ev.mail || {}).added) loadMail();
+    if ((ev.mail || {}).added) {
+      // 搜索索引过期了 —— 新来的那几封也得搜得到
+      invalidateMailIndex();
+      if (state.page === 'mail') loadMail();
+      if (mailSearching()) ensureMailIndex().then(() => scheduleMailSearch());
+    }
     return;
   }
   if (ev.kind === 'memos') {

@@ -227,6 +227,39 @@ def imap_set_seen(acc: dict, uid: str, seen: bool = True
     return True, None
 
 
+def imap_set_seen_many(acc: dict, uids: list[str], seen: bool = True
+                       ) -> tuple[int, str | None]:
+    """一次把**一批**信标成已读 / 未读。返回 (动了几封, 错误说明)。
+
+    为什么不是循环调 imap_set_seen:那样每封都要重新连一次 TLS、重新登录
+    一次 —— 「一键已读」动的是几百封,那就是几百次登录。QQ 邮箱对频繁登录
+    还会限流,几十封之后就全失败了。
+
+    IMAP 的 UID STORE 本来就收 uid 集合(`3,7,11:20`),所以一条命令就够。
+    真要分的话按 900 个一组切 —— 命令行太长有的服务器会拒。
+    """
+    ids = [str(u).strip() for u in uids if str(u).strip().isdigit()]
+    if not ids:
+        return 0, None
+    try:
+        with imaplib.IMAP4_SSL(acc["host"], int(acc.get("port") or 993)) as M:
+            M.login(acc["email"], acc["password"])
+            typ, _ = M.select("INBOX")          # 同样不能 readonly
+            if typ != "OK":
+                return 0, "打不开收件箱"
+            done = 0
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                typ, _ = M.uid("store", ",".join(chunk),
+                               "+FLAGS" if seen else "-FLAGS", "(\Seen)")
+                if typ != "OK":
+                    return done, "服务器不接受这次标记"
+                done += len(chunk)
+    except Exception as exc:                       # noqa: BLE001
+        return 0, f"{type(exc).__name__}: {exc}"
+    return done, None
+
+
 def imap_probe(acc: dict) -> tuple[bool, str | None]:
     """能不能登上去。返回 (ok, 错误说明)。"""
     try:
@@ -453,6 +486,24 @@ class MailStore:
                     self._save()
                     return True
         return False
+
+    def patch_many(self, ids, patch: dict) -> list[str]:
+        """给一批信打同一个补丁,返回真的改了的那些 id。
+
+        **只落盘一次。** 逐封调 update() 会把整个索引写 N 遍 ——
+        「一键已读」几百封的话就是几百次几 MB 的文件写。
+        """
+        want = set(ids)
+        hit = []
+        with self._lock:
+            for m in self._data["messages"]:
+                if m["id"] in want and any(m.get(k) != v
+                                           for k, v in patch.items()):
+                    m.update(patch)
+                    hit.append(m["id"])
+            if hit:
+                self._save()
+        return hit
 
     def merge(self, msgs: list[dict]) -> int:
         """合并进来,返回新增了几封。

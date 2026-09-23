@@ -705,7 +705,8 @@ body[data-mode="chat"] .tb-drag { padding: 0 8px; gap: 6px; }
 /* 形变期间把内容整个淡掉。原生窗口是逐帧改尺寸的,每帧 WebView2 都要重排,
    不遮住的话那串中间布局全看在眼里。淡出比淡入快一点,收起来才利落。 */
 .titlebar, .layout, .layout-mail, .layout-week {
-  transition: opacity 130ms var(--ease), transform 130ms var(--ease);
+  /* 淡**入**用这个(形变结束后内容回来);淡出被 is-morphing 覆盖成 45ms */
+  transition: opacity 90ms var(--ease), transform 90ms var(--ease);
 }
 body.is-morphing .titlebar { opacity: 0; }
 
@@ -770,7 +771,9 @@ body.no-anim.is-unorbing::after { opacity: 0; }
 body.is-morphing .layout {
   opacity: 0;
   transform: scale(.96);
-  transition-duration: 110ms;
+  /* 45ms,和后端 collapse/grow/resize 开头那次 sleep 对齐。原来是 110ms ——
+     整套形变 580ms 里它占了五分之一,而这个动作一天要做几十次 */
+  transition-duration: 45ms;
 }
 
 /* ═══════════════════════ 备忘录(右栏第三个标签)═══════════════════════ */
@@ -2202,6 +2205,82 @@ body[data-mode="chat"] .layout-mail {
 
 /* 四个下拉挤在一行会把左边的计数挤到换行。允许整条换行 —— 宽度够就一行,
    不够就让下拉整组掉到第二行,而不是把标题压扁 */
+/* ── 顶上那条搜索 ──
+   独占一行、贴着页面最上沿。搜索是这一页最频繁的入口,不该和一排下拉框抢位置。 */
+.mail-search-row {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 0 8px;
+}
+.mail-search-ico { flex: 0 0 auto; font-size: 12px; opacity: .6; }
+.mail-search {
+  flex: 1 1 auto; min-width: 0;
+  appearance: none;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-edge-low);
+  background: var(--glass-2);
+  color: var(--text-primary);
+  font: inherit; font-size: 13px;
+  transition: border-color var(--dur-fast) var(--ease),
+              background-color var(--dur-fast) var(--ease);
+}
+.mail-search::placeholder { color: var(--text-muted); }
+.mail-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--plane);
+}
+.mail-search-x {
+  flex: 0 0 auto;
+  appearance: none; border: 0; cursor: pointer; font: inherit;
+  padding: 3px 7px; border-radius: 999px;
+  background: var(--glass-hover); color: var(--text-secondary);
+}
+.mail-search-x:hover { color: var(--text-primary); }
+.mail-search-row .muted { flex: 0 0 auto; font-size: 11.5px; white-space: nowrap; }
+
+/* 搜索时把筛选那一排和标签行让开 —— 搜索**忽略**其它筛选,
+   把它们摆在那儿只会让人以为结果被筛过 */
+body.is-mailsearch .mail-tags,
+body.is-mailsearch .mail-pager,
+/* 正常列表也得藏 —— renderMailList 在搜索时是直接 return 的(不然会把结果
+   冲掉),所以它会**原样留在那儿**。不藏的话两套列表一起显示。 */
+body.is-mailsearch #mailList { display: none; }
+
+/* 结果行:比列表卡片轻得多(一次可能两百条),只有发件人/级别/主题/摘要一行。
+   要看全文点一下进单封视图。 */
+.mail-hit {
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-edge-low);
+  background: var(--glass-2);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+.mail-hit:hover { background: var(--glass-hover); transform: translateX(1px); }
+.mail-hit.is-unread { border-left: 3px solid var(--accent); }
+.mail-hit-top { display: flex; align-items: center; gap: 7px; }
+.mail-hit-from {
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 45%;
+}
+.mail-hit-star { color: var(--warning, #d9a020); font-size: 11px; }
+.mail-hit-subj {
+  margin-top: 2px; font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mail-hit.is-unread .mail-hit-subj { color: var(--text-primary); }
+.mail-hit-sum {
+  margin-top: 2px; font-size: 11.5px; line-height: 1.45;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+/* 「全部标已读」按到第二下(确认态)时变个色,不然看不出来它在等确认 */
+.link-btn.is-warn { color: var(--critical); font-weight: 650; }
+
 .mail-head {
   display: flex; align-items: center; gap: 8px;
   flex-wrap: wrap;

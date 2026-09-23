@@ -82,10 +82,21 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # macos-latest 是 Apple 芯片(arm64)。**Intel Mac 用不了这个包** ——
-    # PyInstaller 冻的是构建机的解释器和原生库,换架构就跑不起来。
-    # 那边只能自己跑 packaging/build_mac.sh,README 里写了。
-    runs-on: macos-latest
+    # **两个架构都要出包。** PyInstaller 冻的是构建机的解释器和原生库,
+    # 换架构就跑不起来 —— 只发 arm64 的话,Intel Mac 的「检查更新」会永远
+    # 报「这个版本没有本平台的安装包」(updater._asset_name 按
+    # platform.machine() 找 NEU-Helper-mac-<arch>.zip)。
+    #
+    #   macos-14  Apple 芯片 -> NEU-Helper-mac-arm64.zip
+    #   macos-13  Intel      -> NEU-Helper-mac-x86_64.zip
+    #
+    # 钉死具体版本而不是 macos-latest:latest 哪天从 arm64 挪到别的架构,
+    # 出来的包名字就变了,而那个名字是自动更新认的。
+    strategy:
+      fail-fast: false           # 一个架构挂了,另一个照样出包
+      matrix:
+        os: [macos-14, macos-13]
+    runs-on: ${{ matrix.os }}
     continue-on-error: true      # 未验证的一档,不许它拖累 Windows 那个包
     steps:
       - uses: actions/checkout@v4
@@ -106,7 +117,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pkg-mac
+          # 名字里带上 runner —— 两个架构是两个并行的 job,
+          # 同名 artifact 会撞车
+          name: pkg-mac-${{ matrix.os }}
           path: dist/NEU-Helper-mac-*.zip
           if-no-files-found: error
 

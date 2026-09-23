@@ -7,33 +7,45 @@
   源码版(git clone 的)      git fetch + merge --ff-only -> 重启
 
 ════════════════════════════════════════════════════════════════════
-**怎么替换一个正在运行的 exe。**
+**怎么替换一个正在运行的程序。**
 
-Windows 不让删正在跑的 exe。常见做法是甩一个 .cmd/.vbs 出去等进程退出再拷,
-但那会闪一个黑框,而且脚本本身还得自己清理。
+Windows 不让删正在跑的 exe;macOS 的 .app 是个带签名的整体,也不能拆着换。
+常见做法是甩一个 .cmd/.sh 出去等进程退出再拷,但那会闪一个黑框,而且脚本
+本身还得自己清理。
 
-这里用另一个办法:**让新版的 exe 自己来装自己**。
+这里用另一个办法:**让新版的程序自己来装自己**。
 
-  1. 下载 zip,解压到 data/update/staged/
-  2. 起 `staged/NEU Helper.exe --apply-update <装在哪> <当前进程的 pid>`
+  1. 下载 zip,解压到暂存目录
+  2. 起 `新程序 --apply-update <装在哪> <当前进程的 pid>`
   3. 本进程退出
-  4. 那个新进程等旧进程死掉,把 staged 里的东西拷过去,再把装好的那个拉起来
+  4. 那个新进程等旧进程死掉,把自己装到位,再把装好的那个拉起来
 
-新版的 exe 是 onefile 的、自带全部依赖,所以它在 staged 里就能独立跑 ——
-不需要任何外部脚本。app.py 在最开头就会认这个参数,不会去开窗口。
+新版的程序自带全部依赖,所以它在暂存目录里就能独立跑 —— 不需要任何外部
+脚本。app.py 在最开头就会认这个参数,不会去开窗口。
+
+**两个平台在第 4 步分岔**(骨架、握手、回滚都是共用的):
+
+  Windows  逐个文件拷进安装目录。exe 放最后拷 —— 版本号是从它读的,
+           它一换更新就"生效"了,所以前面任何一样没拷成,回滚之后
+           应用还是完完整整的旧版。见 apply_update
+  macOS    **整包替换**:把新 .app 挪到位,旧的改名留着当退路。
+           不能逐个文件换 —— 那会破坏 bundle 的封印,而 Apple 芯片上
+           连 ad-hoc 签名都是执行的前提。见 _apply_update_mac
 
 **data/ 和 CLAUDE.md 不动。** 前者是你的邮件、对话、课件;后者是你自己的
-课程表。zip 里本来也没有它们,这里再显式挡一道。
+课程表。Windows 上它们在安装目录里,拷的时候显式跳过;macOS 上它们在
+`.app/Contents/MacOS/` 里面 —— 整包换掉之前必须先搬进新 bundle,
+不然一次更新就把所有数据清了。
+
+也因为这个,**macOS 的暂存目录在 bundle 外面**(`~/.canvas-helper/update`):
+放里面的话,一挪旧 bundle 就把暂存、以及正在跑的那个暂存进程自己的可执行
+文件一起挪走了。见 stage_root。
 ════════════════════════════════════════════════════════════════════
 
 源码版走的是另一条路(_run_git),短得多:快进到 origin 上的那个提交,
 然后重启。**不 stash、不 reset、不 checkout** —— 只做快进这一种操作。
 改动过的文件、和远端分叉了的提交,一律停下来照实说,而不是替用户做决定
 把他的东西弄丢。`data/` 和 `CLAUDE.md` 在 .gitignore 里,git 本来就不碰。
-
-macOS 的**打包版**目前只提示、不代劳:.app 的替换没法在这台 Windows 上验证,
-拿没验过的代码去动别人的安装目录不合适。点"更新"会打开下载页。
-源码版在 macOS 上没这个问题 —— git 是 git。
 """
 from __future__ import annotations
 
@@ -262,6 +274,45 @@ def _log_tail(here: Path, lines: int = 12) -> str:
     return chr(10).join(txt.strip().splitlines()[-lines:])
 
 
+def _run_quiet(cmd: list[str], timeout: int = 60) -> bool:
+    """跑一条外部命令,失败也不抛 —— 都是"尽力而为"的收尾动作
+    (清隔离属性、补执行位),成不成都不该让整次更新失败。"""
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return r.returncode == 0
+    except Exception:                              # noqa: BLE001
+        return False
+
+
+def bundle_of(here: Path) -> Path | None:
+    """`here` 在某个 .app 里面的话,返回那个 .app 的路径。
+
+    打包版的 macOS 上 `here` 是 `NEU Helper.app/Contents/MacOS` ——
+    要换的是整个 .app,不是这一层。
+    """
+    if not platform_id.IS_MAC:
+        return None
+    for p in (here, *here.parents):
+        if p.suffix == ".app":
+            return p
+    return None
+
+
+def stage_root(here: Path) -> Path:
+    """解压和暂存放哪儿。
+
+    Windows 放 `<装在哪>/data/update`,就在安装目录里,顺手。
+
+    **macOS 不能这么放。** 那边 `data/` 在 `.app/Contents/MacOS/` 里面,
+    而替换的做法是"把整个 .app 换掉" —— 暂存目录要是也在 .app 里,
+    一挪旧 bundle 就把暂存(以及正在跑的那个暂存进程自己的可执行文件)
+    一起挪走了。所以 macOS 放到 `~/.canvas-helper/update`,在 bundle 外面。
+    """
+    if bundle_of(here) is not None:
+        return platform_id.config_dir() / "update"
+    return Path(here) / "data" / "update"
+
+
 def where_problem(here: Path) -> str:
     """这个安装目录能就地更新吗。不能就返回一句人话,能就返回空串。
 
@@ -280,16 +331,21 @@ def where_problem(here: Path) -> str:
     每一步都成功,就是不生效。所以只能在动手之前拦。
     """
     here = Path(here)
+    # macOS 打包版:换的是整个 .app,所以要问的是"它所在的目录能不能写",
+    # 而不是 bundle 里面能不能写(那是两件事:/Applications 下的 .app
+    # 里面往往可写,但目录本身归 root,换不了)
+    app = bundle_of(here)
+    probe_dir = app.parent if app is not None else here
     try:
-        probe = here / ".write-probe"
+        probe = probe_dir / ".write-probe"
         probe.write_text("x", encoding="utf-8")
         probe.unlink()
     except OSError as exc:
         why = exc.strerror or exc
         return applang.tr(
-            f"装不进去:{here} 写不了({why})。"
+            f"装不进去:{probe_dir} 写不了({why})。"
             "把整个文件夹挪到你自己的目录下(比如「文档」)再试。",
-            f"Cannot install: {here} is not writable ({why}). "
+            f"Cannot install: {probe_dir} is not writable ({why}). "
             "Move the whole folder somewhere you own (Documents, say) "
             "and try again.")
     # 临时目录。TEMP 本身就是一个很深的路径,所以比的是"在不在它下面",
@@ -434,16 +490,8 @@ class Updater:
         if not url:
             self._set(phase="error", error="这个版本没有本平台的安装包")
             return False
-        # **macOS 的判断要排在最前面。** 那边这条路整个不走(替换 .app 的流程
-        # 没在真机上验证过),所以不该先去查"装在哪能不能写" —— 装在
-        # /Applications 的人会得到一句"装不进去",而真正该说的是"手动更新"。
-        if platform_id.IS_MAC:
-            self._set(phase="error",
-                      error=applang.tr(
-                          "macOS 暂时只能手动更新 —— 已经帮你打开下载页",
-                          "On macOS the update is manual for now — "
-                          "the download page is open"))
-            return False
+        # macOS 这条路**现在是通的**(见 _apply_update_mac)。原来这儿会直接
+        # 早退、让用户去下载页 —— 那时候替换 .app 的流程还没写。
         bad = where_problem(self.here)
         if bad:
             # **先查再下。** 装不进去的话 25MB 下完了也是白下 —— 而且下完之后
@@ -601,50 +649,82 @@ class Updater:
     # ─────────────────── 打包版:换 exe ───────────────────
 
     def _run(self, url: str, want: str = "") -> None:
+        """下载 -> 解压 -> 让新版程序自己来装自己 -> 本进程退出。
+
+        两个平台同一条骨架,只有"解压怎么解"和"要跑哪个可执行文件"分岔:
+
+            Windows   zip 里一层 `NEU Helper/`,里面是 exe + 几个文件
+            macOS     zip 里一个 `NEU Helper.app`,得用 ditto 解
+                      (Python 的 zipfile 会丢掉执行位和符号链接 ——
+                       解出来的 .app 根本起不来)
+        """
         try:
-            work = self.here / "data" / "update"
+            app = bundle_of(self.here)
+            work = stage_root(self.here)
             shutil.rmtree(work, ignore_errors=True)
             work.mkdir(parents=True, exist_ok=True)
             zp = work / "pkg.zip"
             self._download(url, zp)
 
             self._set(phase="extracting", pct=100, msg="正在解压…")
+            raw = work / "raw"
             staged = work / "staged"
-            with zipfile.ZipFile(zp) as z:
-                # zip 里是一层 "NEU Helper/" 目录
-                z.extractall(work / "raw")
-            roots = [p for p in (work / "raw").iterdir() if p.is_dir()]
-            src = roots[0] if len(roots) == 1 else (work / "raw")
+            if app is not None:
+                self._unzip_mac(zp, raw)
+            else:
+                with zipfile.ZipFile(zp) as z:
+                    z.extractall(raw)
+            roots = [q for q in raw.iterdir() if q.is_dir()]
+            src = roots[0] if len(roots) == 1 else raw
             shutil.move(str(src), str(staged))
 
-            exe = staged / "NEU Helper.exe"
-            if not exe.is_file():
-                raise RuntimeError("下载的包里没有 NEU Helper.exe —— 不敢装")
+            if app is not None:
+                # 解出来的那个就是 .app 本体(zip 里一层 NEU Helper.app)
+                staged_app = staged if staged.suffix == ".app" else None
+                if staged_app is None:
+                    staged_app = next((q for q in staged.rglob("*.app")), None)
+                if staged_app is None:
+                    raise RuntimeError("下载的包里没有 NEU Helper.app —— 不敢装")
+                exe = staged_app / "Contents" / "MacOS" / "NEU Helper"
+                if not exe.is_file():
+                    raise RuntimeError(".app 里没有可执行文件 —— 不敢装")
+                # 下载来的东西可能带隔离属性,带着的话它自己都起不来
+                _run_quiet(["xattr", "-cr", str(staged_app)])
+                _run_quiet(["chmod", "+x", str(exe)])
+                target = str(app)
+            else:
+                exe = staged / "NEU Helper.exe"
+                if not exe.is_file():
+                    raise RuntimeError("下载的包里没有 NEU Helper.exe —— 不敢装")
+                target = str(self.here)
 
             self._set(phase="applying", msg="正在替换,马上会重启…")
-            # 让**新版的 exe** 自己来装自己(理由见模块文档)
+            # 让**新版的程序**自己来装自己(理由见模块文档)
             flag = work / STARTED
             flag.unlink(missing_ok=True)
             proc = subprocess.Popen(
-                [str(exe), "--apply-update", str(self.here), str(os.getpid())],
-                cwd=str(staged), close_fds=True)
+                [str(exe), "--apply-update", target, str(os.getpid())],
+                cwd=str(exe.parent), close_fds=True)
             # **确认它真的起来了再退。** 这一步原来是 `sleep(1.2)` 然后就
             # `os._exit(0)` —— 那等于把命交给一个还没见着面的进程:杀毒软件
-            # 拦下这个没签名的 exe、或者它自己一启动就崩,用户看到的是
+            # 拦下这个没签名的程序、或者它自己一启动就崩,用户看到的是
             # 「点了更新,应用没了」,而且一个字的解释都没有。
-            # 新版 exe 一进门就写 started 这个文件,等到它才算数。
+            # 新版程序一进门就写 started 这个文件,等到它才算数。
             for _ in range(150):                   # 最多 15 秒
                 if flag.exists():
                     break
                 if proc.poll() is not None:
                     raise RuntimeError(
                         f"新版程序刚起来就退了(退出码 {proc.returncode})—— "
-                        "多半是被杀毒软件拦了。把安装目录加进白名单再试。")
+                        + ("macOS 可能拦了这个没签名的程序:"
+                           "到「系统设置 → 隐私与安全性」放行一次。"
+                           if app is not None else
+                           "多半是被杀毒软件拦了。把安装目录加进白名单再试。"))
                 time.sleep(0.1)
             else:
                 raise RuntimeError(
-                    "新版程序起不来(等了 15 秒没动静)—— 多半是被杀毒软件"
-                    "拦了。什么都没改,你这一份还是好的。")
+                    "新版程序起不来(等了 15 秒没动静)—— "
+                    "什么都没改,你这一份还是好的。")
             # 记下"我打算变成哪一版"。下次启动核对不上就说出来,
             # 而不是让人对着一个没变的版本号发呆
             mark_pending(self.here, want)
@@ -658,6 +738,22 @@ class Updater:
                 self._lock.release()
             except RuntimeError:
                 pass
+
+    @staticmethod
+    def _unzip_mac(zp: Path, dest: Path) -> None:
+        """用 ditto 解,**不用 zipfile**。
+
+        Python 的 `ZipFile.extractall` 不还原 Unix 权限位、也不还原符号链接 ——
+        而 .app 里 `Contents/MacOS/NEU Helper` 必须可执行,`Frameworks/` 里
+        一堆 dylib 是符号链接。用 zipfile 解出来的 bundle 是死的。
+        build_mac.sh 打包时用的也正是 ditto。
+        """
+        dest.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["ditto", "-x", "-k", str(zp), str(dest)],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError("解压失败(ditto):"
+                               + (r.stderr or "").strip()[:200])
 
     def _download(self, url: str, dst: Path) -> None:
         req = urllib.request.Request(url, headers={
@@ -682,18 +778,36 @@ class Updater:
 
 
 def apply_update(target: Path, wait_pid: int) -> int:
-    """在**新版的 exe** 里跑:等旧进程退出,把自己这一份拷过去,再启动它。
+    """在**新版的程序**里跑:等旧进程退出,把自己这一份装到 target,再启动它。
 
     app.py 在最开头就会把 `--apply-update` 交到这里,所以这个模式下
     不会起服务、不会开窗口。
+
+    `target` 的含义按平台不同:
+        Windows   安装目录(exe 所在的那个文件夹)
+        macOS     `NEU Helper.app` 本身 —— 那边换的是整个 bundle
     """
     target = Path(target)
     staged = Path(sys.executable).resolve().parent
-    log = target / "data" / "update.log"
-    log.parent.mkdir(parents=True, exist_ok=True)
+    mac_app = target if target.suffix == ".app" else None
+
+    # 日志往哪儿写。macOS 上 data/ 在 bundle 里面,而 bundle 整个要被换掉 ——
+    # 所以几头都写一份:暂存区那份总在,旧 bundle 那份留着(万一换失败),
+    # 新 bundle 那份换完就是现场。
+    if mac_app is not None:
+        logs = [staged.parent / "update.log",
+                mac_app / "Contents" / "MacOS" / "data" / "update.log",
+                staged / "data" / "update.log"]
+    else:
+        logs = [target / "data" / "update.log"]
+    for q in logs:
+        try:
+            q.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
     # **第一件事就是打这个招呼。** 旧进程正卡在这儿等 —— 等到了才敢退。
-    # 起不来(杀毒软件拦了、exe 坏了)的话它就不退,用户至少还有个能用的
-    # 应用和一句解释,而不是"点了更新,应用没了"。
+    # 起不来(被拦了、包坏了)的话它就不退,用户至少还有个能用的应用和
+    # 一句解释,而不是"点了更新,应用没了"。
     try:
         (staged.parent / STARTED).write_text(
             time.strftime("%H:%M:%S"), encoding="utf-8")
@@ -702,12 +816,16 @@ def apply_update(target: Path, wait_pid: int) -> int:
 
     def say(m: str) -> None:
         line = f"[{time.strftime('%H:%M:%S')}] {m}"
-        try:
-            with log.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except Exception:                          # noqa: BLE001
-            pass
+        for q in logs:
+            try:
+                with q.open("a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except Exception:                      # noqa: BLE001
+                pass
         print(line, file=sys.stderr, flush=True)
+
+    if mac_app is not None:
+        return _apply_update_mac(mac_app, staged, wait_pid, say)
 
     say(f"准备把 {staged} 装到 {target},等 pid {wait_pid} 退出")
     for _ in range(300):                           # 最多等 30 秒
@@ -802,6 +920,107 @@ def apply_update(target: Path, wait_pid: int) -> int:
     except Exception as exc:                       # noqa: BLE001
         say(f"!! 起不来({type(exc).__name__}: {exc})—— 手动双击一下")
     return 0 if not failed else 1
+
+
+def _apply_update_mac(app: Path, staged: Path, wait_pid: int, say) -> int:
+    """macOS:把整个 `.app` 换掉。
+
+    **和 Windows 那条路的做法不一样,原因是 bundle。** Windows 是逐个文件拷
+    进安装目录;macOS 的 .app 是一个带签名的整体 —— 往里面逐个换文件会破坏
+    bundle 的封印,而且 Apple 芯片上连 ad-hoc 签名都是执行的前提。所以这边是
+    "整包替换":把新 bundle 挪到位,旧的改名留着当退路。
+
+    你的东西怎么带过去:`data/`(邮件、对话、课件、设置)和 `CLAUDE.md` 在
+    `Contents/MacOS/` 里面 —— 换包之前先把它们拷进新 bundle,不然一次更新
+    就把所有数据清了。
+
+    `staged` 是新程序可执行文件所在的目录(`新.app/Contents/MacOS`),
+    所以新 bundle 就是它往上两层。
+    """
+    new_app = staged.parent.parent           # .../新 NEU Helper.app
+    old_side = app.with_name(app.name + ".old")
+    say(f"macOS:准备用 {new_app} 换掉 {app},等 pid {wait_pid} 退出")
+    for _ in range(300):                     # 最多等 30 秒
+        if not _alive(wait_pid):
+            break
+        time.sleep(0.1)
+    else:
+        say("旧进程一直没退出,放弃(什么都没改)")
+        return 1
+    time.sleep(0.5)
+
+    # ① 把"你的东西"搬进新 bundle
+    old_inner = app / "Contents" / "MacOS"
+    new_inner = new_app / "Contents" / "MacOS"
+    for name in sorted(KEEP):
+        src = old_inner / name
+        if not src.exists():
+            continue
+        dst = new_inner / name
+        try:
+            if src.is_dir():
+                shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=True)
+            else:
+                shutil.copy2(src, dst)
+            say(f"带过去了 {name}")
+        except Exception as exc:             # noqa: BLE001
+            say(f"!! {name} 没能带过去:{exc} —— 放弃,什么都没改")
+            return 1
+    # .claude 里用户自己那份设置也留着
+    for d, f in sorted(KEEP_INSIDE):
+        src = old_inner / d / f
+        if src.exists():
+            try:
+                (new_inner / d).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, new_inner / d / f)
+            except Exception:                # noqa: BLE001
+                pass
+
+    # ② 换。**先把旧的挪开、再把新的挪进来** —— 不是先删旧的:
+    #    第二步万一失败,旧的还能原样挪回去
+    try:
+        shutil.rmtree(old_side, ignore_errors=True)
+        app.rename(old_side)
+    except OSError as exc:
+        say(f"!! 挪不开旧的 .app({exc})—— 多半是所在目录没有写权限。"
+            "什么都没改")
+        return 1
+    try:
+        try:
+            new_app.rename(app)              # 同卷:原子,一瞬间
+        except OSError:
+            # 跨卷(暂存在 ~ 而应用在别的盘)—— rename 不行,老老实实拷
+            say("跨卷,改成拷贝")
+            shutil.copytree(new_app, app, symlinks=True)
+    except Exception as exc:                 # noqa: BLE001
+        say(f"!! 新的 .app 没装上({exc})—— 把旧的挪回来")
+        try:
+            if app.exists():
+                shutil.rmtree(app, ignore_errors=True)
+            old_side.rename(app)
+            say("旧版本已还原")
+        except OSError as exc2:
+            say(f"!! 连还原都失败了({exc2})。旧版本在 {old_side},"
+                "手动改个名就能用")
+        return 1
+
+    # ③ 收尾:清隔离属性、补执行位。都是尽力而为
+    _run_quiet(["xattr", "-cr", str(app)])
+    _run_quiet(["chmod", "+x", str(app / "Contents" / "MacOS" / "NEU Helper")])
+    shutil.rmtree(old_side, ignore_errors=True)
+    say(f"装好了:{app}")
+
+    # ④ 起新的。**这一步绝对不能抛异常** —— 文件都换好了,再炸一次的话
+    #    用户得到的是"更新完但应用没起来,而且屏幕上什么都没有"
+    try:
+        # `open` 而不是直接 Popen 可执行文件:让 LaunchServices 正常注册
+        # 这个应用(Dock 图标、激活状态都靠它),而且不会把新进程挂在
+        # 这个马上要退出的进程下面
+        subprocess.Popen(["open", "-n", str(app), "--args", "--after-update"])
+        say("启动 " + str(app))
+    except Exception as exc:                 # noqa: BLE001
+        say(f"!! 起不来({type(exc).__name__}: {exc})—— 手动打开一下")
+    return 0
 
 
 def _alive(pid: int) -> bool:

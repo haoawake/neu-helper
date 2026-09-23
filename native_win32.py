@@ -211,12 +211,25 @@ def animate_to(
     logical_h: int,
     duration: float = 0.26,
     frames: int = 22,
+    anchor_br: tuple[int, int] | None = None,
 ) -> None:
     """把窗口平滑变形到目标尺寸,锚住右下角。
 
     同一时刻只允许一个动画:后来的会让前一个提前退出(靠 generation 计数),
     否则连点两个按钮会有两个循环互相抢 SetWindowPos。
+
+    `anchor_br` 给了就以它为右下角(默认是窗口当前的右下角)。
+    **这个参数原来只有 cocoa 那份有** —— 分发层的两份签名必须一样,
+    不然"在另一个平台上必然 TypeError"这种 bug 只能等用户来报。
     """
+    if anchor_br is not None:
+        sc = dpi_scale(hwnd)
+        w = max(1, int(round(logical_w * sc)))
+        h = max(1, int(round(logical_h * sc)))
+        ax, ay = anchor_br
+        x, y, w, h = nudge_onscreen(hwnd, ax - w, ay - h, w, h)
+        animate_rect(hwnd, x, y, w, h, duration, frames)
+        return
     global _anim_gen
     with _anim_lock:
         _anim_gen += 1
