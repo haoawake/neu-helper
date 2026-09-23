@@ -1,0 +1,130 @@
+{
+  "v3.5.1": {
+    "title": "v3.5.1 — 发布流程、邮箱与桌面交互更新",
+    "body": "## 更新内容\n\n- 发布流程支持 Windows 与 macOS 构建任务独立执行，并由发布任务统一收集可用构建产物。\n- 邮箱新增即时搜索，覆盖发件人、主题、AI 摘要与标签，搜索过程在前端内存中完成。\n- 邮箱排序加入阅读状态优先级，并提供批量已读与单封阅读状态切换。\n- 悬浮球收放动画缩短时长并优化交互响应，Windows 通知区与 macOS 菜单栏加入应用入口。\n- 主题初始化同步悬浮组件外观，macOS 打包版加入应用内自动更新流程。\n- Apple Silicon 提供 Release 构建包；Intel Mac 采用本机构建脚本生成对应架构产物。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.3.3...v3.5.1"
+  },
+  "v3.3.3": {
+    "title": "v3.3.3 — macOS 应用包元数据与版本信息",
+    "body": "## 更新内容\n\n- macOS bundle 显式配置 `LSBackgroundOnly` 为前台应用模式，使主窗口参与应用激活与键盘输入。\n- Finder 中的应用版本信息统一读取 `version.py`。\n- 发布流程加入 macOS bundle 结构与关键资源校验。\n- Release 同时提供 Windows x64 与 Apple Silicon 构建产物。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.3.2...v3.3.3"
+  },
+  "v3.3.2": {
+    "title": "v3.3.2 — macOS Apple Silicon 构建与发布支持",
+    "body": "## 更新内容\n\n- CI 新增 Apple Silicon macOS 应用构建，产物为 `NEU-Helper-mac-arm64.zip`。\n- 首次启动流程支持 Finder“打开”与“系统设置 → 隐私与安全性”授权。\n- 安装位置识别加入 macOS `TMPDIR` 路径规则。\n- 发布流水线拆分为 Windows、macOS 与统一发布任务。\n- Intel Mac 可通过 `./packaging/build_mac.sh` 在本机生成对应架构构建。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.3.1...v3.3.2"
+  },
+  "v3.3.1": {
+    "title": "v3.3.1 — Windows 自动更新校验与安装路径识别",
+    "body": "## 更新内容\n\n- 更新前检查安装目录写入权限与系统临时目录位置。\n- 旧进程退出前等待新版本进程完成启动握手。\n- 重启后对比目标版本与当前版本，并在界面展示安装位置。\n- 应用可执行文件安排在替换流程末段写入，提升更新事务的一致性。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.3.0...v3.3.1"
+  },
+  "v3.3.0": {
+    "title": "v3.3.0 — 窗口动画、信息弹窗与英文界面完善",
+    "body": "## 更新内容\n\n- 完整面板、对话框与悬浮球之间的形态切换采用新的动画时序。\n- 信息弹窗加入关闭入口，并可激活当前应用窗口。\n- 英文界面补充动态文案与桌面组件文案覆盖。\n- 邮箱排序将阅读状态与重要程度组合为统一排序规则。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.2.3...v3.3.0"
+  },
+  "v3.2.3": {
+    "title": "v3.2.3 — 主题同步与桌面组件视觉一致性",
+    "body": "## 更新内容\n\n- 主题切换时同步重新生成悬浮组件渲染帧。\n- 信息弹窗同步海边与像素主题视觉。\n- 像素主题调整边缘渲染与交互区域，使桌面组件与主题几何保持一致。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.2.2...v3.2.3"
+  },
+  "v3.2.2": {
+    "title": "v3.2.2 — 海边与像素主题背景更新",
+    "body": "## 更新内容\n\n- 海边主题加入独立海景背景层，与玻璃界面和水面元素形成统一视觉。\n- 像素主题加入像素化背景语言，与方角、硬投影和等宽字体形成统一视觉。\n- 背景层与前景内容采用独立层级，保持信息区域的阅读清晰度。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.2.1...v3.2.2"
+  },
+  "v3.2.1": {
+    "title": "v3.2.1 — 海边悬浮球与像素草方块",
+    "body": "## 更新内容\n\n- 海边主题悬浮组件采用玻璃球、水面、双正弦波与高光元素。\n- 像素主题悬浮组件采用等距草方块造型，并按网格组织表面纹理。\n- 像素纹理采用坐标哈希生成，使动画过程中的纹理保持稳定。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.2.0...v3.2.1"
+  },
+  "v3.2.0": {
+    "title": "v3.2.0 — 海边与像素主题系统",
+    "body": "## 更新内容\n\n- 主题系统扩展为跟随系统、浅色、深色、NEU、海边与像素六种模式。\n- 海边主题配置圆角、柔和投影、玻璃效果与弹性动效。\n- 像素主题配置方角、硬投影、等宽字体与分步动画。\n- 悬浮组件与信息弹窗分别维护与主题匹配的渲染配置。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.1.2...v3.2.0"
+  },
+  "v3.1.2": {
+    "title": "v3.1.2 — 信息弹窗窗口层级管理",
+    "body": "## 更新内容\n\n- 信息弹窗激活主窗口后恢复标准窗口层级。\n- 完整面板、对话框与悬浮球在弹窗跳转后保持各自窗口状态。\n- 窗口激活流程统一由桌面原生层处理。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.1.1...v3.1.2"
+  },
+  "v3.1.1": {
+    "title": "v3.1.1 — 信息弹窗窗口激活行为",
+    "body": "## 更新内容\n\n- 点击信息弹窗时激活已有应用窗口并保留当前窗口形态。\n- 弹窗跳转与主窗口显示流程采用统一入口。\n- 桌面窗口状态在邮件跳转过程中持续保留。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.1.0...v3.1.1"
+  },
+  "v3.1.0": {
+    "title": "v3.1.0 — 邮件摘要、验证码与弹窗交互",
+    "body": "## 更新内容\n\n- 邮件 AI 摘要采用事实型内容概述，聚焦邮件主题、事项与时间信息。\n- 验证码类邮件在摘要区域直接展示验证码。\n- 右下角信息弹窗可直接打开对应邮件。\n- 邮件卡片统一摘要、标签、关键链接与日程信息的展示结构。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.0.4...v3.1.0"
+  },
+  "v3.0.4": {
+    "title": "v3.0.4 — 版本状态展示",
+    "body": "## 更新内容\n\n- 版本设置区域同时展示当前版本与最新版本。\n- 版本比较采用数字分段规则处理语义版本号。\n- 手动检查与自动检查共享统一版本状态展示。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.0.3...v3.0.4"
+  },
+  "v3.0.3": {
+    "title": "v3.0.3 — 更新后重启与开机启动设置",
+    "body": "## 更新内容\n\n- Windows 更新流程在文件替换完成后启动新版本应用。\n- 设置页加入开机启动控制项。\n- 更新器统一管理重启路径与应用启动参数。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.0.2...v3.0.3"
+  },
+  "v3.0.2": {
+    "title": "v3.0.2 — 更新状态判定与网络流程",
+    "body": "## 更新内容\n\n- 源码版通过磁盘 `version.py` 与当前进程 `VERSION` 判定重启状态。\n- 本地重启判定与远端版本查询采用独立流程。\n- 更新页面补充代理与网络状态相关诊断信息。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.0.1...v3.0.2"
+  },
+  "v3.0.1": {
+    "title": "v3.0.1 — Git 代理回退更新",
+    "body": "## 更新内容\n\n- 源码版更新在代理连接状态触发时加入直连重试流程。\n- 直连重试仅作用于当前 Git 网络命令，保留用户全局 Git 配置。\n- 更新日志记录代理路径与直连路径的执行结果。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.0.0...v3.0.1"
+  },
+  "v3.0.0": {
+    "title": "v3.0.0 — 中英双语、NEU 主题与对话交互",
+    "body": "## 更新内容\n\n- 设置页加入中文与 English 两种界面语言，新生成的 Claude 对话、简报、邮件摘要与日程标题同步语言设置。\n- 应用图标更新，并加入黑、白、红视觉体系的 NEU 主题。\n- 聊天消息加入复制、编辑与重新发送，简报加入全文复制与文本右键菜单。\n- 日程页加入已移除条目恢复与手动重新解析流程。\n- 邮件日程加入相似事项合并与关联邮件查看。\n- 发布流程加入基于 `v*` tag 的 GitHub Actions 自动构建与 Release 发布。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.7...v3.0.0"
+  },
+  "v2.0.7": {
+    "title": "v2.0.7 — 统一更新入口",
+    "body": "## 更新内容\n\n- 更新与重启操作整合为单一主按钮，按钮文案根据当前版本状态切换。\n- 磁盘版本与进程版本共同决定重启状态。\n- 版本检查、代码更新与重启流程使用统一状态模型。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.6...v2.0.7"
+  },
+  "v2.0.6": {
+    "title": "v2.0.6 — 版本信息与更新状态",
+    "body": "## 更新内容\n\n- 版本区域持续展示当前版本信息。\n- 检测到新版本时同步展示目标版本。\n- 磁盘代码版本与运行中进程版本用于识别重启生效状态。\n- 源码版补充远端提交状态展示。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.5...v2.0.6"
+  },
+  "v2.0.5": {
+    "title": "v2.0.5 — 日程解析状态反馈",
+    "body": "## 更新内容\n\n- 日程解析根据 Canvas 凭据、Canvas 连接状态与当前课程数据提供明确状态信息。\n- 空课程列表场景在界面展示对应解析状态。\n- 配置引导根据操作系统展示对应安装脚本。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.4...v2.0.5"
+  },
+  "v2.0.4": {
+    "title": "v2.0.4 — macOS 安装引导适配",
+    "body": "## 更新内容\n\n- 配置提示根据平台选择对应安装命令。\n- Windows 引导使用 `install.ps1`，macOS 引导使用 `install.sh`。\n- Canvas 凭据与安装修复提示采用统一平台识别逻辑。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.3...v2.0.4"
+  },
+  "v2.0.3": {
+    "title": "v2.0.3 — 邮件日程时区解析",
+    "body": "## 更新内容\n\n- 邮件日程结构化结果加入时区字段与本地时区转换。\n- `00:00` 按具体时刻参与日程计算。\n- 日程块展示原文时刻与时区信息，全天事项采用全天展示格式。\n- 时区解析覆盖 ET、UTC 与 Pacific 等常见表达。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.2...v2.0.3"
+  },
+  "v2.0.2": {
+    "title": "v2.0.2 — 桌面窗口拖动性能",
+    "body": "## 更新内容\n\n- 窗口拖动路径减少循环回环 HTTP 请求数量。\n- 高频窗口位置更新转移到更适合桌面交互的执行路径。\n- 桌面原生窗口层与本地服务继续保持分层结构。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.1...v2.0.2"
+  },
+  "v2.0.1": {
+    "title": "v2.0.1 — 邮件安全标签判定",
+    "body": "## 更新内容\n\n- 邮件安全标签依据发件域名、机构关系、凭据请求与紧急跳转等证据生成。\n- 官方账户安全通知按账号安全或验证码类别处理。\n- 发件域名与自称机构之间的关系加入标签判断依据。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v2.0.0...v2.0.1"
+  },
+  "v2.0.0": {
+    "title": "v2.0.0 — 邮件日程集成与课程学期筛选",
+    "body": "## 更新内容\n\n- 邮件 AI 在分类与摘要流程中同步提取面试、讲座、预约与截止事项。\n- 邮件事项进入周日程，并与课程时间、office hour 与本地备忘统一展示。\n- 日程支持具体时刻、全天事项、邮件跳转与时区转换。\n- 课程列表基于 NEU 学期代码进行筛选，并加入学期切换缓冲期。\n- 培训与 orientation 等独立学期模块保留在课程数据范围内。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v1.0.6...v2.0.0"
+  },
+  "v1.0.6": {
+    "title": "v1.0.6 — 源码版自动更新",
+    "body": "## 更新内容\n\n- Git 源码版加入 `git fetch`、快进更新与应用重启流程。\n- 更新过程保留 `data/`、`CLAUDE.md` 与本地配置。\n- 源码版与打包版共享统一的应用内更新入口。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v1.0.5...v1.0.6"
+  },
+  "v1.0.5": {
+    "title": "v1.0.5 — 每周课程表",
+    "body": "## 更新内容\n\n- 学业页加入每周课程表，展示上课时间与教师、TA office hour。\n- 课程首页、syllabus 与公告内容可结构化提取为日程条目。\n- 课程日程支持本地编辑与增量刷新。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v1.0.4...v1.0.5"
+  },
+  "v1.0.4": {
+    "title": "v1.0.4 — 安装补全",
+    "body": "## 更新内容\n\n- 应用启动时检查 Canvas MCP、`CLAUDE.md`、权限配置与快捷方式状态。\n- 仪表盘与设置页加入安装补全入口。\n- 补全流程可重新配置 MCP、项目规则、桌面快捷方式与开机启动项。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v1.0.3...v1.0.4"
+  },
+  "v1.0.3": {
+    "title": "v1.0.3 — Windows 安装流程兼容性",
+    "body": "## 更新内容\n\n- 首次安装流程适配 Canvas MCP 注册状态。\n- `setup.ps1` 统一处理凭据保存、MCP 注册、快捷方式与应用配置。\n- 安装步骤按可重复执行方式组织，适合首次配置与后续补全。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v1.0.2...v1.0.3"
+  },
+  "v1.0.2": {
+    "title": "v1.0.2 — 应用内更新与邮件链接摘要",
+    "body": "## 更新内容\n\n- 应用加入 GitHub Release 检查、更新横幅与版本设置。\n- Windows 打包版支持应用内下载、文件替换与重启。\n- 邮件 AI 从正文链接中提取关键链接，并为每条链接生成用途说明。\n- 邮件 AI 结构化结果处理加入多种 JSON 输出形态兼容、恢复与日志记录。\n- 安装文档覆盖 Windows 与 macOS 源码运行流程。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v1.0.1...v1.0.2"
+  },
+  "v1.0.1": {
+    "title": "v1.0.1 — Windows 打包兼容性",
+    "body": "## 更新内容\n\n- Windows x64 打包流程调整下载文件的运行兼容性处理。\n- Release 提供 `NEU-Helper-win-x64.zip`。\n- 发布前检查覆盖真实下载与解压路径。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v1.0.0...v1.0.1"
+  },
+  "v1.0.0": {
+    "title": "v1.0.0 — 初始预发布",
+    "body": "## 更新内容\n\n- 建立 NEU Helper 桌面应用基础版本。\n- 首版覆盖 Canvas 仪表盘、邮箱、Claude Code 对话、课程文件同步与悬浮桌面形态。\n- Windows x64 打包流程与 Release 结构在此版本建立。\n- 该版本标记为预发布，后续稳定版本延续同一项目数据与配置结构。\n\n## 版本源码\n\nhttps://github.com/haoawake/neu-helper/tree/v1.0.0"
+  }
+}
