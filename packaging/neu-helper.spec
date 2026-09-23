@@ -55,6 +55,11 @@ from pathlib import Path
 IS_MAC = sys.platform == "darwin"
 PROJ = Path(SPECPATH).resolve().parent          # noqa: F821  (PyInstaller 注入)
 
+# 版本号唯一的来源还是 version.py。读它而不是写死 —— .app 的
+# CFBundleShortVersionString 要用(Finder 的「简介」里显示的就是它)
+sys.path.insert(0, str(PROJ))
+import version as _ver                          # noqa: E402
+
 # ── Anaconda 的坑:标准库的扩展模块会依赖 Library/bin 里的 DLL,
 #    而 PyInstaller 只收得到 .pyd、收不到它背后的那个 DLL。
 #
@@ -171,6 +176,8 @@ if IS_MAC:
         coll,
         name="NEU Helper.app",
         icon=ICON,
+        # 不传的话 PyInstaller 填 "0.0.0",Finder 的「简介」里就是这个数
+        version=_ver.VERSION,
         bundle_identifier="com.neuhelper.app",
         info_plist={
             "CFBundleName": "NEU Helper",
@@ -178,6 +185,21 @@ if IS_MAC:
             "NSHighResolutionCapable": True,
             # 悬浮球和弹窗要能浮在别的应用之上,而且应用本身常驻
             "LSUIElement": False,
+            # ── 这一条**必须显式写 False**,否则这个 .app 是不可用的 ──
+            #
+            # PyInstaller 会自己塞 `LSBackgroundOnly = True`,规则是
+            # 「EXE 的 console=True 就算后台程序」。而 BUNDLE 的 console
+            # 是从 COLLECT 继承的,COLLECT 又是**被最后一个 EXE 覆盖**的 ——
+            # 这里 COLLECT(app_exe, …, mcp_exe, …) 里排在后面的正是
+            # canvas-mcp,它 console=True(靠 stdin/stdout 说话,必须有控制台)。
+            # 于是整个 .app 被标成了后台专用程序。
+            #
+            # LSBackgroundOnly=True 的后果不是"少个 Dock 图标"那么轻:
+            # 系统认定这个进程没有界面,窗口拿不到 key 状态 —— 对话框打出来
+            # 也打不了字。v3.3.2 那个 mac 包就是这样发出去的。
+            #
+            # (想要"有界面但不占 Dock"用的是 LSUIElement,不是这一条。)
+            "LSBackgroundOnly": False,
             "NSAppleEventsUsageDescription":
                 "把已经在跑的窗口叫到前面时需要。",
         },
