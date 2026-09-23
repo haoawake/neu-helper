@@ -27,6 +27,17 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+# 进度是中文打的,而终端不一定编得出来。英文版 Windows 的控制台是 cp1252,
+# 一个 print 就是 UnicodeEncodeError、退出码 1 —— 而 install.ps1 和
+# packaging/build_win.ps1 都拿退出码判断成败,于是**装不上、也打不了包**,
+# 报错还完全不指向真正的原因(GitHub Actions 上就是这么挂的)。
+# 进度文字编不出来就退化成问号,不该拖垮整件事。
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except (AttributeError, ValueError):            # 被重定向成非文本流
+    pass
+
 import orb_render  # noqa: E402
 
 # ICO 里放这些尺寸。再大没意义:Windows 最大用到 256

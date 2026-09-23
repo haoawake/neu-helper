@@ -14,6 +14,15 @@ Windows 和 macOS 两套实现,而开发是在 Windows 上做的 —— macOS �
 """
 from __future__ import annotations
 
+# 同 make_icon.py:输出是中文的,终端不一定编得出来(英文版 Windows 是 cp1252)。
+# 自检本身不该因为"打不出这几个字"而崩掉。
+import sys as _sys
+try:
+    _sys.stdout.reconfigure(errors="replace")
+    _sys.stderr.reconfigure(errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 import importlib
 import sys
 import threading

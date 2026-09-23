@@ -218,6 +218,12 @@ $ws = New-Object -ComObject WScript.Shell
 # Rebuild whenever icon.png is newer than the .ico -- the old test was
 # "only if missing", so swapping in a new icon.png changed nothing and you
 # were left staring at the previous icon with no idea why.
+# Python scripts in this project print Chinese progress lines. On an English
+# Windows the console codepage is cp1252 and a single print blows up with
+# UnicodeEncodeError -- exit code 1 -- and the caller reads that as "the step
+# failed". Turn UTF-8 mode on for everything we launch from here.
+$env:PYTHONUTF8 = "1"
+
 $icon = Join-Path $proj "gui\icon.ico"
 $src = Join-Path $proj "icon.png"
 $stale = (-not (Test-Path $icon)) -or
