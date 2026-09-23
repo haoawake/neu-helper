@@ -256,14 +256,23 @@ $desk.Save()
 Ok "desktop shortcut -> $deskPath"
 
 # Explorer caches shortcut icons by path and does NOT notice that an .ico was
-# rewritten in place -- you get the old picture until the cache happens to
-# roll over. Poke it so a fresh icon shows up right away.
-try {
-    Start-Process -FilePath (Join-Path $env:SystemRoot "System32\ie4uinit.exe") `
-                  -ArgumentList "-show" -WindowStyle Hidden -ErrorAction Stop
-    Ok "refreshed the shell icon cache"
-} catch {
-    Warn "could not refresh the icon cache -- sign out and back in if the old icon sticks"
+# rewritten in place -- you get the old picture until the cache rolls over.
+# Poke it. Only bother when we actually rebuilt the icon.
+if ($stale) {
+    try {
+        Start-Process -FilePath (Join-Path $env:SystemRoot "System32\ie4uinit.exe") `
+                      -ArgumentList "-show" -WindowStyle Hidden -ErrorAction Stop
+        Ok "asked Explorer to re-read its icon cache"
+    } catch { }
+    # Be honest: the poke above is often NOT enough. Measured on a real machine --
+    # every shortcut pointed at the new .ico and SHGetFileInfo returned the new
+    # image, yet the desktop kept drawing the old one, because Explorer holds its
+    # own copy in memory. Only a cache purge + restart fixed it. Not doing that
+    # from an installer (it closes every File Explorer window), so hand over the
+    # exact command instead of leaving people guessing.
+    Warn "if the old icon is still showing, the cache is stale. Run this:"
+    Write-Host "         taskkill /f /im explorer.exe; " -NoNewline
+    Write-Host "del /a /q `"%LocalAppData%\Microsoft\Windows\Explorer\iconcache*`"; start explorer"
 }
 
 # ---------------------------------------------------------------- 6. verify
