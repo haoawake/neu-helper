@@ -34,6 +34,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 默认是深度 1,那样 `git describe` 找不到上一个 tag,
+          # compare 链接就拼不出来
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -79,19 +83,30 @@ jobs:
         id: notes
         shell: bash
         run: |
+          # **写进工作区,不要写 /tmp。** 这是 Windows runner:bash 步骤看到的
+          # /tmp 是 Git Bash 自己那套 MSYS 路径,而下面那个 action 是 Node 写的,
+          # 它把 body_path 当普通 Windows 路径解释 —— 两边根本不是同一个目录,
+          # 文件"明明写出来了"却读不到。第一次就是这么悄悄退回自动 changelog 的
+          # (所有步骤还都是绿的)。相对路径由 action 按工作区解析,不会错。
           f="packaging/notes/${GITHUB_REF_NAME}.md"
           if [ -f "$f" ]; then
-            head -1 "$f" | sed 's/^#* *//' > /tmp/title.txt
-            tail -n +2 "$f" > /tmp/body.md
-            echo "title=$(cat /tmp/title.txt)" >> "$GITHUB_OUTPUT"
-            echo "body=/tmp/body.md" >> "$GITHUB_OUTPUT"
+            title=$(head -1 "$f" | sed 's/^#* *//')
+            tail -n +2 "$f" > release-body.md
             echo "found notes: $f"
           else
-            echo "::warning::no packaging/notes/${GITHUB_REF_NAME}.md - falling back to the auto changelog"
-            echo "title=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            : > /tmp/body.md
-            echo "body=/tmp/body.md" >> "$GITHUB_OUTPUT"
+            echo "::warning::no $f - the release will go out with only a changelog link"
+            title="${GITHUB_REF_NAME}"
+            : > release-body.md
           fi
+          # 自己拼 compare 链接,不用 generate_release_notes —— 那个开关在"更新
+          # 已存在的 Release"这条路上会把正文整个换掉,正是上面要避免的事
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            printf '\n---\n\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$GITHUB_REF_NAME" >> release-body.md
+          fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "body is $(wc -c < release-body.md) bytes"
 
       - name: publish the release
         if: github.ref_type == 'tag'
@@ -99,6 +114,4 @@ jobs:
         with:
           files: dist/NEU-Helper-win-x64.zip
           name: ${{ steps.notes.outputs.title }}
-          body_path: ${{ steps.notes.outputs.body }}
-          # 生成的 changelog 接在手写正文后面,两样都留着
-          generate_release_notes: true
+          body_path: release-body.md

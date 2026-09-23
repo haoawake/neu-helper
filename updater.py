@@ -126,7 +126,10 @@ def _notes_since(releases: list, current: str) -> list[dict]:
         out.append({
             "version": tag.lstrip("vV"),
             "date": (r.get("published_at") or "")[:10],
-            "notes": (r.get("body") or "").strip()[:2000],
+            # 6000 而不是 2000:一篇像样的更新说明轻松过两千字,截在
+            # 2000 会把正文腰斩(v3.0.0 那篇 3330 字,英文那一段整个没了)。
+            # 面板本来就是可滚的,而这点体积在一次 HTTPS 往返里不值一提。
+            "notes": (r.get("body") or "").strip()[:6000],
         })
     out.sort(key=lambda x: ver.parse(x["version"]), reverse=True)
     return out
