@@ -488,7 +488,24 @@ class Updater:
         重启回来核对不上就说出来。
         """
         if not url:
-            self._set(phase="error", error="这个版本没有本平台的安装包")
+            # 这句话得能让人动手。会走到这儿的现实情况只有一种:**Intel Mac** ——
+            # GitHub 已经下线了 Intel 的 macOS runner,CI 出不了 x86_64 的包
+            # (见 .github/workflows/release.yml 里 macos 那个 job)。
+            # 光说"没有本平台的安装包"等于把人堵在墙上。
+            import platform as _plat
+            arch = _plat.machine()
+            if platform_id.IS_MAC and arch not in ("arm64",):
+                self._set(phase="error", error=applang.tr(
+                    f"没有 {arch} 这个架构的预构建包 —— GitHub 已经不提供 Intel 的"
+                    "构建机了。在这台 Mac 上跑一次 ./packaging/build_mac.sh "
+                    "就能自己出一个(几分钟),之后照样能用「检查更新」看版本。",
+                    f"No prebuilt package for {arch} — GitHub no longer offers "
+                    "Intel macOS runners. Run ./packaging/build_mac.sh once on "
+                    "this Mac to build your own (a few minutes)."))
+            else:
+                self._set(phase="error", error=applang.tr(
+                    "这个版本没有本平台的安装包",
+                    "This release has no package for your platform"))
             return False
         # macOS 这条路**现在是通的**(见 _apply_update_mac)。原来这儿会直接
         # 早退、让用户去下载页 —— 那时候替换 .app 的流程还没写。

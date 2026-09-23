@@ -18,9 +18,20 @@
 # windows / macos 各自构建,publish 收拢起来发一次。原来 publish 是 windows
 # 那个 job 里的最后一步;加了 macOS 之后必须拆开,否则没法等两边都出包。
 #
-# **macos 是 continue-on-error 的。** 那一档在真机上没验证过(见 README
-# 最后一节),构建环境也是新的 —— 它挂了不该把 Windows 那个包一起拖住。
-# 挂了的结果就是 Release 里只有 win 的 zip,和加它之前一样。
+# **publish 的门是 `needs.windows.result == 'success'`,不是 needs 默认那套。**
+#
+# 这一条是踩了坑才写死的。原来写的是 `needs: [windows, macos]` 加
+# `continue-on-error: true`(挂在 macos 上),以为这样 mac 挂了也不影响发布 ——
+# **错了。** job 级别的 continue-on-error 只是"不把整个 run 标红",
+# 那个 job 的 conclusion 仍然是 failure,于是 `needs` 它的 job 照样被**跳过**。
+#
+# 两个一起的后果是最坏的那种:mac 那条腿一挂,publish 直接不跑、
+# 一个 Release 都不发,而 run 看着还不红。v3.4.0 和 v3.5.0 就是这么
+# "推上去了但没发布"的 —— tag 在,Release 没有,没有任何一处报错。
+#
+# 现在:publish 用 `if: always()` 自己判门,只要 windows 成了就发;
+# 而 macos **不再** continue-on-error —— 它挂了 run 就是红的(该看见),
+# 但发布照走。
 
 name: release
 
@@ -82,22 +93,18 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # **两个架构都要出包。** PyInstaller 冻的是构建机的解释器和原生库,
-    # 换架构就跑不起来 —— 只发 arm64 的话,Intel Mac 的「检查更新」会永远
-    # 报「这个版本没有本平台的安装包」(updater._asset_name 按
-    # platform.machine() 找 NEU-Helper-mac-<arch>.zip)。
+    # **只有 Apple 芯片。** 原来这儿是 `[macos-14, macos-13]`,想顺手把
+    # Intel 的包也出了 —— 但 GitHub 已经下线了 Intel 的 macOS runner:
+    # 那条腿两次运行里压根没出现过(job 列表里只有 `macos (macos-14)`),
+    # 而"有一条腿没成"就足以让 publish 被跳过。
     #
-    #   macos-14  Apple 芯片 -> NEU-Helper-mac-arm64.zip
-    #   macos-13  Intel      -> NEU-Helper-mac-x86_64.zip
+    # 所以 Intel Mac 没有预构建包,只能自己跑 packaging/build_mac.sh。
+    # README 和 updater 的报错里都写明了。
     #
-    # 钉死具体版本而不是 macos-latest:latest 哪天从 arm64 挪到别的架构,
-    # 出来的包名字就变了,而那个名字是自动更新认的。
-    strategy:
-      fail-fast: false           # 一个架构挂了,另一个照样出包
-      matrix:
-        os: [macos-14, macos-13]
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true      # 未验证的一档,不许它拖累 Windows 那个包
+    # 钉死 macos-14 而不是 macos-latest:latest 哪天挪到别的架构,
+    # 出来的包名字就变了,而那个名字是自动更新认的
+    # (updater._asset_name 按 platform.machine() 找)。
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
@@ -117,15 +124,16 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          # 名字里带上 runner —— 两个架构是两个并行的 job,
-          # 同名 artifact 会撞车
-          name: pkg-mac-${{ matrix.os }}
+          name: pkg-mac
           path: dist/NEU-Helper-mac-*.zip
           if-no-files-found: error
 
   publish:
     needs: [windows, macos]
-    if: github.ref_type == 'tag'
+    # **always() 加自己判门。** 见文件开头那段:不这么写的话 macos 一挂,
+    # 这个 job 会被静静跳过,于是"tag 推上去了但没有 Release",
+    # 而且哪儿都不报错。Windows 的包是底线,它成了就必须发出去。
+    if: always() && github.ref_type == 'tag' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -136,7 +144,10 @@ jobs:
 
       # 不写 name = 把所有 artifact 都下下来,各自一个子目录。
       # macos 挂掉的话就只有 pkg-win,下面的 glob 自然只找到一个包。
+      # 不写 name = 把所有 artifact 都下下来。macos 挂了就只有 pkg-win,
+      # 下面的 glob 自然只找到一个包 —— 所以这一步不能因为"少了一个"而失败
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: dl
 

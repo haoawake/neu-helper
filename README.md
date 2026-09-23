@@ -7,7 +7,7 @@
 默认 Canvas 实例是 `https://northeastern.instructure.com`，也可以改成其他 Canvas 实例。
 
 - Windows 10 / 11：可直接使用打包版
-- macOS：Apple 芯片和 Intel 都有预构建的 `.app`（**未在真机验证过**，见下），也可以源码运行或自行构建
+- macOS：Apple 芯片有预构建的 `.app`（**未在真机验证过**，见下）；Intel 需自行构建
 - Canvas 数据：只读
 - AI：通过 Claude Code CLI
 - UI：本地运行，不需要部署服务器
@@ -512,14 +512,13 @@ python3 app.py
 
 ### macOS 打包
 
-Release 里有两个包，由 CI 在 macOS runner 上构建：
+Release 里有一个 **Apple 芯片（arm64）** 的包：`NEU-Helper-mac-arm64.zip`，
+由 CI 在 macOS runner 上构建。
 
-| 你的 Mac | 附件 |
-|---|---|
-| Apple 芯片（M 系列） | `NEU-Helper-mac-arm64.zip` |
-| Intel | `NEU-Helper-mac-x86_64.zip` |
-
-应用里的「检查更新」会按 `platform.machine()` 自己挑对的那个。
+**Intel Mac 没有预构建包** —— GitHub 已经下线了 Intel 的 macOS runner，
+CI 出不了 x86_64 的构建（PyInstaller 冻的是构建机的解释器和原生库，不能交叉
+构建）。Intel 机器在本机跑一次 `./packaging/build_mac.sh` 就能自己出一个，
+几分钟的事；应用里点「检查更新」会直接把这句话说给你。
 
 **它没有在真机上运行验证过，也没有签名。** 作者手上只有 Windows，能做的只是
 代码层核对加逻辑自检。所以：
