@@ -214,9 +214,12 @@ fi
 # ---------------------------------------------------------------- 5. startup
 step 5 "Installing the login item"
 
-# The icon. .icns for the Dock; generated from the same code that draws the
-# floating orb, so the two always match.
-if [ ! -f "$PROJ/gui/icon.icns" ]; then
+# The icon. .icns for the Dock, built from icon.png by make_icon.py.
+# Rebuild whenever icon.png is newer than the .icns -- the old test was
+# "only if missing", so dropping in a new icon.png changed nothing and you
+# were left staring at the previous icon with no idea why.
+if [ ! -f "$PROJ/gui/icon.icns" ] \
+   || { [ -f "$PROJ/icon.png" ] && [ "$PROJ/icon.png" -nt "$PROJ/gui/icon.icns" ]; }; then
   "$PY_BIN" "$PROJ/make_icon.py" --icns >/dev/null 2>&1 \
     && ok "generated gui/icon.icns" || warn "could not generate the icon"
 fi

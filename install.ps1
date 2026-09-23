@@ -213,11 +213,30 @@ Step 5 "Installing the logon entry"
 $startup = [Environment]::GetFolderPath("Startup")
 $lnkPath = Join-Path $startup "NEU Helper.lnk"
 $ws = New-Object -ComObject WScript.Shell
+
+# Build the icon FIRST: both shortcuts below point at it.
+# Rebuild whenever icon.png is newer than the .ico -- the old test was
+# "only if missing", so swapping in a new icon.png changed nothing and you
+# were left staring at the previous icon with no idea why.
+$icon = Join-Path $proj "gui\icon.ico"
+$src = Join-Path $proj "icon.png"
+$stale = (-not (Test-Path $icon)) -or
+         ((Test-Path $src) -and
+          (Get-Item $src).LastWriteTime -gt (Get-Item $icon).LastWriteTime)
+if ($stale) {
+    Native { & $py (Join-Path $proj "make_icon.py") } "generate icon"
+}
+
 $lnk = $ws.CreateShortcut($lnkPath)
 $lnk.TargetPath = Join-Path $env:SystemRoot "System32\wscript.exe"
 $lnk.Arguments = '"' + (Join-Path $proj "startup-gate.vbs") + '"'
 $lnk.WorkingDirectory = $proj
 $lnk.Description = "Open the Canvas study assistant at logon"
+# This one needs an explicit icon too. Without it the shortcut inherits
+# whatever the target is (wscript.exe), or worse, keeps a path an earlier
+# install wrote -- one machine had it pointing into a %TEMP% folder that had
+# long since been cleaned up, so the Start-up entry showed a blank icon.
+if (Test-Path $icon) { $lnk.IconLocation = "$icon,0" }
 $lnk.WindowStyle = 7
 $lnk.Save()
 Ok "shortcut -> $lnkPath"
@@ -225,20 +244,27 @@ Ok "gate: opens at most one window per day (edit oncePerDay in startup-gate.vbs)
 
 # A desktop shortcut as well -- the logon gate refuses to open twice in one day,
 # so without this there is no obvious way to start the app by hand.
-$icon = Join-Path $proj "gui\icon.ico"
-if (-not (Test-Path $icon)) {
-    Native { & $py (Join-Path $proj "make_icon.py") } "generate icon"
-}
 $deskPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "NEU Helper.lnk"
 $desk = $ws.CreateShortcut($deskPath)
 $desk.TargetPath = $pyw
 $desk.Arguments = '"' + (Join-Path $proj "app.py") + '"'
 $desk.WorkingDirectory = $proj
 $desk.Description = "NEU Helper"
-if (Test-Path $icon) { $desk.IconLocation = $icon }
+if (Test-Path $icon) { $desk.IconLocation = "$icon,0" }
 $desk.WindowStyle = 1
 $desk.Save()
 Ok "desktop shortcut -> $deskPath"
+
+# Explorer caches shortcut icons by path and does NOT notice that an .ico was
+# rewritten in place -- you get the old picture until the cache happens to
+# roll over. Poke it so a fresh icon shows up right away.
+try {
+    Start-Process -FilePath (Join-Path $env:SystemRoot "System32\ie4uinit.exe") `
+                  -ArgumentList "-show" -WindowStyle Hidden -ErrorAction Stop
+    Ok "refreshed the shell icon cache"
+} catch {
+    Warn "could not refresh the icon cache -- sign out and back in if the old icon sticks"
+}
 
 # ---------------------------------------------------------------- 6. verify
 Step 6 "Verifying"
