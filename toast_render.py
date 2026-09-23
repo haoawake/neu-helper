@@ -35,11 +35,39 @@ def _rgba(r, g, b, a):
     return bytes((int(b * f), int(g * f), int(r * f), a))
 
 
+# 当前配色名。空 = 按深浅在明暗两套里选;"neu" = 校徽的黑白红。
+# 和 orb_render 一个路子:宿主只知道"现在是不是深色",不知道主题叫什么,
+# 而弹窗是自绘的读不到 CSS —— 所以用一个模块级开关,由 server 在偏好
+# 变化时拨过来。
+THEME = ""
+
+
+def set_theme(name: str | None) -> None:
+    """拨到某一档配色。认不出的名字一律回到"按深浅选"。"""
+    global THEME
+    THEME = name if name == "neu" else ""
+
+
 def colors(dark: bool):
     """(卡片底色, 标题色, 正文色, 阴影不透明度)。"""
+    if THEME == "neu":
+        # 中性灰而不是深色主题那个带蓝的 (32,39,51) —— 黑白红里没有蓝的位置
+        return (28, 28, 32), (0xF6, 0xF6, 0xF7), (0xBD, 0xBD, 0xC2), 0.58
     if dark:
         return (32, 39, 51), (0xF2, 0xF5, 0xFA), (0xC6, 0xCE, 0xDC), 0.55
     return (252, 253, 255), (0x10, 0x14, 0x1C), (0x4A, 0x50, 0x60), 0.30
+
+
+def accent(dark: bool):
+    """左边那道竖条的颜色。
+
+    **原来这里是写死的 `0x2A78D6`**,所以弹窗在深色下也用浅色主题那支蓝,
+    换成 NEU 主题更是纹丝不动 —— 界面全红了,右下角还弹出一道蓝杠。
+    现在跟着界面的 --accent 走,三档各自对齐。
+    """
+    if THEME == "neu":
+        return (0xEF, 0x2D, 0x47)
+    return (0x4F, 0x97, 0xEE) if dark else (0x2A, 0x78, 0xD6)
 
 
 def metrics(scale: float) -> dict:
@@ -74,6 +102,7 @@ def paint_card(buf, w: int, h: int, scale: float, dark: bool) -> bytearray:
     pad = int(PAD * s)
     mar = int(SHADOW_MARGIN * s)
     base, _tcol, _bcol, sh_a = colors(dark)   # 文字色是宿主的事,这里只要底色
+    acc = accent(dark)
     r = int(12 * s)
     bar = int(4 * s)
     x0, y0 = mar, mar
@@ -91,8 +120,7 @@ def paint_card(buf, w: int, h: int, scale: float, dark: bool) -> bytearray:
             o = (y * w + x) * 4
             if d <= -1.0:                          # 卡片内部:完全不透明
                 a = 255
-                px = _rgba(*base, 255) if x >= x0 + bar else _rgba(
-                    0x2A, 0x78, 0xD6, 255)
+                px = _rgba(*base, 255) if x >= x0 + bar else _rgba(*acc, 255)
             elif d <= 0.0:                         # 圆角上的抗锯齿
                 a = int(255 * (-d))
                 px = _rgba(*base, a)

@@ -61,6 +61,7 @@ import memos
 import timetable as tt
 import orb_render
 import toast as toastmod
+import toast_render
 
 # 两个根目录。**没打包的时候它们是同一个**,所以平时读起来和以前一样。
 #
@@ -2205,9 +2206,13 @@ def api_prefs_get():
 def api_prefs_set():
     d = write_prefs(request.get_json(silent=True) or {})
     # 悬浮球的外观/大小、整窗透明度都归设置管,改完立刻生效
+    # 球和右下角那个弹窗都是自绘的,读不到 CSS —— 主题得单独告诉它们一声
+    orb_render.set_theme(d.get("theme"))
+    toast_render.set_theme(d.get("theme"))
+    if backend.toast is not None:
+        # dark 是个普通属性,下一条弹窗就跟着走(toast.py 的接口说明里写着)
+        backend.toast.dark = dark_mode()
     if orb:
-        # 球是自绘的,读不到 CSS —— 主题名得单独告诉它一声(见 orb_render.set_theme)
-        orb_render.set_theme(d.get("theme"))
         orb.set_look(diameter=int(d["orbSize"]), dark=dark_mode(),
                      animate=bool(d.get("anim", True)))
     h = _hwnd()
@@ -2239,12 +2244,16 @@ _hwnd_cache = 0
 def attach_orb(o) -> None:
     """app.py 在窗口出来之后把球装上来。
 
-    顺手把配色拨到当前主题 —— 不然选了 NEU 的人每次开机都会先看到一颗蓝球,
-    直到他去动一次设置(set_theme 原本只在 /api/prefs 那条路上调)。
+    顺手把**两个自绘件**(悬浮球、右下角弹窗)的配色拨到当前主题 —— 不然选了
+    NEU 的人每次开机都会先看到一颗蓝球、一道蓝杠,直到他去动一次设置
+    (set_theme 原本只在 /api/prefs 那条路上调)。弹窗是紧接着这一步才建的,
+    而 THEME 是模块级的、出图那一刻才读,所以先后无所谓。
     """
     global orb
     orb = o
-    orb_render.set_theme(read_prefs().get("theme"))
+    theme = read_prefs().get("theme")
+    orb_render.set_theme(theme)
+    toast_render.set_theme(theme)
 
 
 def _hwnd() -> int:
@@ -2345,6 +2354,7 @@ def apply_mode(mode: str) -> dict:
             # 没拖过就落在窗口右下角那一块
             ox, oy = right - orb.size, bottom - orb.size
         orb_render.set_theme(prefs.get("theme"))
+        toast_render.set_theme(prefs.get("theme"))
         orb.set_look(diameter=int(prefs["orbSize"]), dark=dark_mode(),
                      # render_scale 而不是 dpi_scale:球要的是"一个窗口单位
                      # 画几个位图像素"。Windows 上两者相等,macOS 上不等

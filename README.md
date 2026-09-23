@@ -84,31 +84,34 @@ CS5800 最近有没有新公告？
 
 主题四档：跟随系统 / 浅色 / 深色 / **NEU**。
 
-NEU 那一档取自应用图标的三色 —— 黑底、白字、校徽红。图标本身是根目录那张
-`icon.png`；`make_icon.py` 从它生成 `gui/icon.ico`（Windows）、`gui/icon.icns`
-（macOS）和 `gui/icon-128.png`（标题栏左上那个小标）。换图标只要换掉 `icon.png`
-再跑一次 `python make_icon.py --all`。**没有 Pillow 也能跑** —— 解码、挖白底、
-缩放、编码全是手写的，和这个项目其他地方一样零第三方依赖。
-
-> 换完图标如果桌面上还是旧的，那是 Explorer 的图标缓存：它按路径缓存，**不会**
-> 注意到一个 .ico 被原地改写了。`install.ps1` 会调一次 `ie4uinit -show`，但实测
-> **这一下经常不够** —— 每个快捷方式都指着新 .ico、`SHGetFileInfo` 返回的也是新图，
-> 桌面却照画旧的，因为 Explorer 在自己进程里还攥着一份。真正管用的是清掉缓存再
-> 重起它（会关掉所有资源管理器窗口，所以装机脚本不替你做，只把命令打出来）：
->
-> ```
-> taskkill /f /im explorer.exe & del /a /q "%LocalAppData%\Microsoft\Windows\Explorer\iconcache*" & start explorer
-> ```
->
-> 窗口和任务栏那个图标是应用**启动时**挂上的，所以换完图标要重启应用才会变。它**不是第三种明暗**，
-而是深色的一张皮：底子仍是那套验过对比度的深色值，只把蓝整体换成红、玻璃面从
-偏蓝的灰改成中性灰。桌面上那颗悬浮球跟着换成红光（它是自绘的，读不到 CSS，
-所以主题名要单独告诉它一声）。
+NEU 那一档取自应用图标的三色 —— 黑底、白字、校徽红。它**不是第三种明暗**，而是
+深色的一张皮：底子仍是那套验过对比度的深色值，只把蓝整体换成红、玻璃面从偏蓝的
+灰改成中性灰。桌面上那颗悬浮球和右下角的信息弹窗**都跟着换** —— 它们是逐像素
+自绘的、读不到 CSS，所以主题名要单独拨给它们（`orb_render.set_theme` /
+`toast_render.set_theme`）。
 
 > 红当强调色有个绕不开的地方：官方那支 `#C8102E` 压白字很稳，但它自己当文字
 > 压在近黑底上只有 3.3:1，读不了。所以 `--accent` 取亮一档的 `#ef2d47`，和深色
 > 主题那支蓝 `#4f97ee` 亮度相当 —— 两边的取舍是同一个，不是这里单独放宽的。
 > 报错色也跟着提亮成 `#ff6b6b`，靠亮度而不是色相和强调色拉开。
+
+图标本身是根目录那张 `icon.png`；`make_icon.py` 从它生成 `gui/icon.ico`
+（Windows）、`gui/icon.icns`（macOS）和 `gui/icon-128.png`（标题栏左上那个小标）。
+换图标只要换掉 `icon.png` 再跑一次 `python make_icon.py --all`。**没有 Pillow
+也能跑** —— 解码、挖白底、缩放、编码全是手写的，和这个项目其他地方一样零第三方
+依赖。
+
+> 换完图标如果桌面上还是旧的，那是 Explorer 的图标缓存：它按路径缓存，**不会**
+> 注意到一个 .ico 被原地改写了。`install.ps1` 会调一次 `ie4uinit -show`，但实测
+> **这一下经常不够** —— 每个快捷方式都指着新 .ico、`SHGetFileInfo` 返回的也是
+> 新图，桌面却照画旧的，因为 Explorer 在自己进程里还攥着一份。真正管用的是清掉
+> 缓存再重起它（会关掉所有资源管理器窗口，所以装机脚本不替你做，只把命令打出来）：
+>
+> ```
+> taskkill /f /im explorer.exe & del /a /q "%LocalAppData%\Microsoft\Windows\Explorer\iconcache*" & start explorer
+> ```
+>
+> 窗口和任务栏那个图标是应用**启动时**挂上的，所以换完图标要重启应用才会变。
 
 ### 🔌 Canvas MCP
 
