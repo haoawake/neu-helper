@@ -35,6 +35,7 @@ Canvas 没有这两样的结构化接口。实测(2026 秋):
 """
 from __future__ import annotations
 
+import applang
 import hashlib
 import json
 import re
@@ -144,7 +145,7 @@ def gather(c, course: dict, section_ids: list[int], anns: list[dict]) -> dict:
 
 
 def build_prompt(course: dict, src: str) -> str:
-    return f"""下面是 Canvas 上一门课的页面、syllabus 和公告的正文。把其中**每周固定重复**的时间安排抽出来。
+    return applang.json_note() + f"""下面是 Canvas 上一门课的页面、syllabus 和公告的正文。把其中**每周固定重复**的时间安排抽出来。
 
 课程:{course.get('short') or course.get('code')} —— {course.get('name')}
 

@@ -23,6 +23,7 @@ import email
 import email.header
 import email.utils
 import imaplib
+import applang
 import json
 import os
 import re
@@ -826,6 +827,7 @@ def build_mail_prompt(store: MailStore, history, today: str,
             lines.append(text)
             lines.append("")
         lines.append("</以往邮件简报>")
+    lines.append(applang.reply_note())
     return chr(10).join(lines)
 
 

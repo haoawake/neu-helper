@@ -24,6 +24,7 @@
 """
 from __future__ import annotations
 
+import applang
 import json
 import re
 import subprocess
@@ -376,6 +377,8 @@ def build_prompt(msgs: list[dict], facts, tags, tzname: str = "") -> str:
         '"links":[{"n":2,"label":"报名表单"}],'
         '"events":[{"date":"2026-09-23","start":"14:00","end":"15:00",'
         '"title":"和导师一对一","kind":"meet","tz":"ET"}]}]',
+        "",
+        applang.json_note().strip(),
         "",
         "邮件:",
     ]

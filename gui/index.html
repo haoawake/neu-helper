@@ -533,6 +533,16 @@
           </div>
 
           <div class="pref-row">
+            <label class="pref-label">语言</label>
+            <div class="seg" id="segLang" role="radiogroup" aria-label="语言">
+              <!-- 这两个词自己不翻:用母语写出来才认得 -->
+              <button class="seg-btn" data-v="zh" role="radio">中文</button>
+              <button class="seg-btn" data-v="en" role="radio">English</button>
+            </div>
+            <span class="pref-hint pref-hint-wide" id="langHint"></span>
+          </div>
+
+          <div class="pref-row">
             <label class="pref-label" for="rngBlur">玻璃模糊</label>
             <input type="range" id="rngBlur" class="rng" min="0" max="44" step="2"
                    title="0 = 关掉模糊,最省电">
@@ -900,6 +910,8 @@
   </div>
 </div>
 
+<!-- i18n 要排在 app.js 前面:app.js 一跑就开始建 DOM 了 -->
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

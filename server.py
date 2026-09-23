@@ -59,6 +59,7 @@ import mailevents
 import mailpeople
 import memos
 import timetable as tt
+import applang
 import orb_render
 import toast as toastmod
 import toast_render
@@ -1657,7 +1658,7 @@ def api_chat():
     backend.chats.add(cid, "user", msg, ctx=ctx)
     # 上下文优先靠 --resume;续不上时用存档里的最近 10 轮重建(见 chat_bridge._run)
     backend.mark_hot()
-    backend.chat.send_async(context_prefix(ctx) + msg,
+    backend.chat.send_async(context_prefix(ctx) + msg + applang.reply_note(),
                             fallback_context=backend.chats.context_block(cid))
     return jsonify({"ok": True, "chat_id": cid})
 
@@ -1692,6 +1693,7 @@ def resend_edited(chat_session, store, d: dict) -> dict:
     prompt = context_prefix(ctx) + msg
     if head:
         prompt = head + chr(10) * 2 + prompt
+    prompt += applang.reply_note()
     backend.mark_hot()
     chat_session.send_async(prompt)
     return {"ok": True, "chat_id": cid}
@@ -1874,6 +1876,7 @@ DEFAULT_PREFS = {
     # 点过「跳过这个版本」的那个版本号 —— 它再也不会提醒
     "skipVersion": "",
     "theme": "auto",        # auto | light | dark | neu(校徽黑白红,深色的一张皮)
+    "lang": "zh",           # 界面语言 zh | en。也决定模型用哪门语言回答
     "mode": "full",         # orb | chat | full
     "blur": 26,             # 玻璃模糊半径(px),0 = 关掉 backdrop-filter
     "glass": 0.55,          # 玻璃表面不透明度 0.30~1.00(页面内的,CSS 管)
@@ -2209,6 +2212,7 @@ def api_prefs_set():
     # 球和右下角那个弹窗都是自绘的,读不到 CSS —— 主题得单独告诉它们一声
     orb_render.set_theme(d.get("theme"))
     toast_render.set_theme(d.get("theme"))
+    applang.set_lang(d.get("lang"))
     if backend.toast is not None:
         # dark 是个普通属性,下一条弹窗就跟着走(toast.py 的接口说明里写着)
         backend.toast.dark = dark_mode()
@@ -2952,7 +2956,7 @@ def api_mailchat():
     backend.mail_chats.add(cid, "user", msg, ctx=ctx)
     backend.mark_hot()
     backend.mail_chat.send_async(
-        context_prefix(ctx) + msg,
+        context_prefix(ctx) + msg + applang.reply_note(),
         fallback_context=backend.mail_chats.context_block(cid))
     return jsonify({"ok": True, "chat_id": cid})
 
@@ -3132,6 +3136,9 @@ def free_port() -> int:
 
 
 def serve(port: int) -> None:
+    # 语言拨在这儿而不是 attach_orb 里:那个只在悬浮球起得来的时候才走,
+    # 而"模型用哪门语言回答"和有没有球无关
+    applang.set_lang(read_prefs().get("lang"))
     # 每条请求都打一行日志会把启动器捕获的 stderr 刷爆,只留错误
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
     # threaded=True 是必须的:SSE 是长连接,单线程会把其他请求全堵死

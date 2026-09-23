@@ -5089,7 +5089,7 @@ async function loadPrefs() {
 // 后端返回的偏好总是「默认值 + 存档」的完整对象;这份兜底只在
 // /api/prefs 请求失败时起作用,免得界面上出现 NaN 和 undefined
 const PREF_FALLBACK = {
-  theme: 'auto', mode: 'full', blur: 26, glass: 0.55, anim: true,
+  theme: 'auto', lang: 'zh', mode: 'full', blur: 26, glass: 0.55, anim: true,
   orbSize: 36, briefHour: 9, topmost: true, showDismissed: true, opacity: 1,
   briefHistory: 3, upcomingDays: 28, soonDays: 3, annDays: 10,
   toastOn: true, toastSecs: 9, updateCheck: true, updateToast: true,
@@ -5108,6 +5108,9 @@ function applyPrefs(prefs) {
 
   // neu = 校徽那三色(黑白红)的深色皮,和 light/dark 并列摆在设置里
   root.dataset.theme = ['light', 'dark', 'neu'].includes(p.theme) ? p.theme : 'auto';
+  // 语言只在启动时接一次。切语言走的是「存偏好 + 刷新页面」那条路
+  // (见 wirePrefs),所以这里不用管从英文切回中文
+  if (!state.i18nOn) { state.i18nOn = true; startI18n(p.lang); }
   root.style.setProperty('--glass-a', String(p.glass));
   root.style.setProperty('--blur', (p.blur || 0) + 'px');
   document.body.dataset.blur = Number(p.blur) > 0 ? 'on' : '0';
@@ -5140,6 +5143,11 @@ function syncPrefsUI() {
   document.querySelectorAll('#segTheme .seg-btn').forEach((b) => {
     b.classList.toggle('is-on', b.dataset.v === theme);
     b.setAttribute('aria-checked', String(b.dataset.v === theme));
+  });
+  document.querySelectorAll('#segLang .seg-btn').forEach((b) => {
+    const on = b.dataset.v === (p.lang === 'en' ? 'en' : 'zh');
+    b.classList.toggle('is-on', on);
+    b.setAttribute('aria-checked', String(on));
   });
   $('rngBlur').value = p.blur;
   $('outBlur').textContent = Number(p.blur) > 0 ? p.blur + ' px' : '关';
@@ -5652,6 +5660,19 @@ function wirePrefs() {
 
   document.querySelectorAll('#segTheme .seg-btn').forEach((b) => {
     b.addEventListener('click', () => savePrefs({ theme: b.dataset.v }));
+  });
+
+  // 切语言:存下来,然后**整页重来一遍**。
+  // 表是单向的(中文 -> 英文),往回切需要反查,而反查在"两句中文翻成同一句
+  // 英文"时是二义的。刷新则拿到一份干净的中文 DOM,动态内容本来就是从后端
+  // 重新取的,什么都不丢 —— 详见 i18n.js 开头。
+  document.querySelectorAll('#segLang .seg-btn').forEach((b) => {
+    b.addEventListener('click', async () => {
+      if (b.dataset.v === (state.prefs.lang === 'en' ? 'en' : 'zh')) return;
+      $('langHint').textContent = '切换中…';
+      await savePrefs({ lang: b.dataset.v });
+      location.reload();
+    });
   });
 
   // 玻璃两根滑块:拖的时候即时预览(只改 CSS 变量),松手才写文件

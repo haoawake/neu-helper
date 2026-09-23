@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import applang
 import json
 import threading
 import time
@@ -135,6 +136,8 @@ def build_prompt(store: BriefingStore, date: str, history_n: int | None = None,
     else:
         parts.append("")
         parts.append("(没有历史简报,这是第一份)")
+    # 语言要求放在最后一行:离模型最近,压得过 CLAUDE.md 里那句
+    parts.append(applang.reply_note())
     return "\n".join(parts)
 
 
