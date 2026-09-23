@@ -129,17 +129,25 @@ jobs:
           echo "title: $TITLE"
           echo "body:  $(wc -c < release-body.md) bytes"
           if gh release view "$tag" >/dev/null 2>&1; then
+            # **--draft=false 不能省。** 删掉一个 tag,GitHub 会把它那个已发布的
+            # Release 转成草稿(不是删掉)。重打 tag 之后走到这一支,不显式发布
+            # 的话它就一直是草稿 —— 而草稿对没登录的人是**看不见的**,
+            # /releases/tags/<tag> 直接 404。表现又是"全绿但线上没有"。
             echo "release exists -> updating"
-            gh release edit "$tag" --title "$TITLE" --notes-file release-body.md
+            gh release edit "$tag" --title "$TITLE" --notes-file release-body.md \
+                                   --draft=false --prerelease=false --latest
             gh release upload "$tag" "$zip" --clobber
           else
             echo "creating the release"
             gh release create "$tag" --title "$TITLE" --notes-file release-body.md "$zip"
           fi
-          # 发完回头读一遍。正文没写进去就当场失败 —— 上一次正是"绿着但没生效"
-          got=$(gh release view "$tag" --json body --jq '.body | length')
-          echo "the release body now has $got characters"
-          if [ "$got" -lt 100 ]; then
-            echo "::error::the release body did not take"
+          # 发完回头读一遍:正文写进去了吗、是不是还草稿着、包挂上了吗。
+          # 这一版在"所有步骤全绿而线上不对"上栽了三次,不自己验就还会有第四次。
+          got=$(gh release view "$tag" --json isDraft,body,assets \
+                  --jq '"\(.isDraft) \(.body|length) \(.assets|length)"')
+          echo "isDraft / body chars / assets = $got"
+          read -r draft chars assets <<< "$got"
+          if [ "$draft" != "false" ] || [ "$chars" -lt 100 ] || [ "$assets" -lt 1 ]; then
+            echo "::error::release is not in the state we wanted ($got)"
             exit 1
           fi
