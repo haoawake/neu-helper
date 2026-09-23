@@ -185,6 +185,65 @@
   --shadow-lg: 0 8px 20px rgba(0, 0, 0, 0.44), 0 24px 60px rgba(0, 0, 0, 0.50);
 }
 
+/* ── NEU:校徽那三色(黑、白、红)──
+
+   这不是第三种明暗,是**深色的一张皮**:底子还是那套深色值(所以对比度是
+   验过的那一份),只把"蓝"整体换成 NEU 红,玻璃面从偏蓝的灰改成中性灰 ——
+   黑白红三色里没有蓝的位置。
+
+   **红这一档要同时当填充色和文字色**,这是所有红品牌深色皮的老问题:
+   官方那个 #C8102E 白字压上去很稳,但它自己当文字压在近黑底上只有 3.3:1,
+   读不了。所以 --accent 取亮一档的 #ef2d47(和深色主题那个蓝 #4f97ee
+   亮度相当,两边的取舍因此是同一个,不是这里单独放宽的)。
+
+   --critical 也得动。强调色已经是红的了,报错再用同一支红就分不出来 ——
+   这里把它提亮成 #ff6b6b,靠**亮度**而不是色相拉开。代码里每一处
+   critical 本来就还配着图标、左边线或者明说的字,颜色从来不是唯一通道。 */
+:root[data-theme="neu"] {
+  color-scheme: dark;
+
+  --plane:          #0a0a0c;                       /* 图标上那块黑 */
+  --fleck:          rgba(255, 255, 255, 0.06);
+  /* 背景那几团光:红为主,配一点中性白,不要蓝紫 */
+  --blob-1:         rgba(200, 16, 46, 0.24);
+  --blob-2:         rgba(255, 255, 255, 0.05);
+  --blob-3:         rgba(200, 16, 46, 0.12);
+  --bloom-1:        rgba(224, 34, 63, 0.48);
+  --bloom-2:        rgba(255, 255, 255, 0.13);
+  --bloom-3:        rgba(200, 16, 46, 0.26);
+
+  --glass-1:        rgba(26, 26, 29, calc(var(--glass-a) * 1.18));
+  --glass-2:        rgba(36, 36, 40, calc(var(--glass-a) * 1.04));
+  --glass-3:        rgba(30, 30, 34, calc(var(--glass-a) + .33));
+  --glass-hover:    rgba(48, 48, 53, calc(var(--glass-a) * 1.24));
+  --glass-edge:     rgba(255, 255, 255, 0.13);
+  --glass-edge-low: rgba(255, 255, 255, 0.07);
+  --hairline:       rgba(255, 255, 255, 0.10);
+  --wash:           rgba(255, 255, 255, 0.06);
+  --field-edge:     rgba(255, 255, 255, 0.20);
+
+  --text-primary:   #f6f6f7;
+  --text-secondary: #bdbdc2;
+  --text-muted:     #8a8a91;
+
+  --seq-fill:       #c8102e;                       /* 官方那支 NEU 红 */
+  --seq-fill-lite:  #f0798c;
+  --seq-track:      rgba(200, 16, 46, 0.26);
+  --accent:         #ef2d47;
+  --accent-soft:    rgba(239, 45, 71, 0.20);
+  --accent-wash:    rgba(239, 45, 71, 0.16);
+  --accent-ink:     #ff96a6;
+  --serious-wash:   rgba(240, 160, 90, 0.16);
+  --serious-ink:    #f2b183;
+  --good-wash:      rgba(108, 209, 112, 0.16);
+  --good-ink:       #86d98a;
+  --critical:       #ff6b6b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.34), 0 2px 8px rgba(0, 0, 0, 0.26);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.38), 0 8px 24px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 8px 20px rgba(0, 0, 0, 0.48), 0 24px 60px rgba(0, 0, 0, 0.54);
+}
+
 * { box-sizing: border-box; }
 
 /* hidden 属性靠 UA 样式的 [hidden]{display:none} 生效,优先级低于任何类选择器。
@@ -265,11 +324,17 @@ h3 { font-size: 16px; font-weight: 650; margin: 0; }
 .tb-actions { display: flex; align-items: center; gap: 1px; padding-right: 5px; }
 .tb-sep { width: 1px; height: 16px; margin: 0 6px; background: var(--hairline); }
 
+/* 标题栏左上那个标 —— 就是应用图标本身(gui/icon-128.png,由 make_icon.py
+   从根目录那张源图生成)。原来是一个纯色小圆点,换成真图标之后,窗口里和
+   任务栏上看到的是同一个东西。
+   圆角比图标自己那个小一点点:18px 上照搬原比例会显得太圆,像个药丸 */
 .brand-mark {
   flex: 0 0 auto;
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  -webkit-user-select: none; user-select: none;
+  /* 图标本身是黑底,浅色主题下和白玻璃反差很大 —— 收一点边缘,别太生硬 */
+  box-shadow: 0 0 0 1px var(--hairline);
 }
 .brand-name {
   font-weight: 650; font-size: 13px;
@@ -365,7 +430,8 @@ h3 { font-size: 16px; font-weight: 650; margin: 0; }
     );
   }
 }
-:root[data-theme="dark"] .pane::before {
+:root[data-theme="dark"] .pane::before,
+:root[data-theme="neu"] .pane::before {
   background: linear-gradient(
     168deg,
     rgba(255, 255, 255, .10) 0%,
@@ -466,6 +532,9 @@ body.no-anim.is-unorbing::after { opacity: 0; }
 }
 :root[data-theme="dark"] body.is-orbing::after,
 :root[data-theme="dark"] body.is-unorbing::after { background-color: #202736; }
+/* NEU 这一档的中性灰,别带蓝 */
+:root[data-theme="neu"] body.is-orbing::after,
+:root[data-theme="neu"] body.is-unorbing::after { background-color: #1c1c20; }
 body.is-morphing .layout {
   opacity: 0;
   transform: scale(.96);

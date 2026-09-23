@@ -59,6 +59,7 @@ import mailevents
 import mailpeople
 import memos
 import timetable as tt
+import orb_render
 import toast as toastmod
 
 # 两个根目录。**没打包的时候它们是同一个**,所以平时读起来和以前一样。
@@ -1871,7 +1872,7 @@ DEFAULT_PREFS = {
     "updateToast": True,
     # 点过「跳过这个版本」的那个版本号 —— 它再也不会提醒
     "skipVersion": "",
-    "theme": "auto",        # auto | light | dark
+    "theme": "auto",        # auto | light | dark | neu(校徽黑白红,深色的一张皮)
     "mode": "full",         # orb | chat | full
     "blur": 26,             # 玻璃模糊半径(px),0 = 关掉 backdrop-filter
     "glass": 0.55,          # 玻璃表面不透明度 0.30~1.00(页面内的,CSS 管)
@@ -1983,8 +1984,8 @@ def dark_mode() -> bool:
     那一段在 desktop.system_dark 里。
     """
     theme = read_prefs().get("theme")
-    if theme == "dark":
-        return True
+    if theme in ("dark", "neu"):
+        return True                     # neu 是深色的一张皮,不是第三种明暗
     if theme == "light":
         return False
     return desktop.system_dark()
@@ -2205,6 +2206,8 @@ def api_prefs_set():
     d = write_prefs(request.get_json(silent=True) or {})
     # 悬浮球的外观/大小、整窗透明度都归设置管,改完立刻生效
     if orb:
+        # 球是自绘的,读不到 CSS —— 主题名得单独告诉它一声(见 orb_render.set_theme)
+        orb_render.set_theme(d.get("theme"))
         orb.set_look(diameter=int(d["orbSize"]), dark=dark_mode(),
                      animate=bool(d.get("anim", True)))
     h = _hwnd()
@@ -2234,8 +2237,14 @@ _hwnd_cache = 0
 
 
 def attach_orb(o) -> None:
+    """app.py 在窗口出来之后把球装上来。
+
+    顺手把配色拨到当前主题 —— 不然选了 NEU 的人每次开机都会先看到一颗蓝球,
+    直到他去动一次设置(set_theme 原本只在 /api/prefs 那条路上调)。
+    """
     global orb
     orb = o
+    orb_render.set_theme(read_prefs().get("theme"))
 
 
 def _hwnd() -> int:
@@ -2335,6 +2344,7 @@ def apply_mode(mode: str) -> dict:
         if ox is None or oy is None:
             # 没拖过就落在窗口右下角那一块
             ox, oy = right - orb.size, bottom - orb.size
+        orb_render.set_theme(prefs.get("theme"))
         orb.set_look(diameter=int(prefs["orbSize"]), dark=dark_mode(),
                      # render_scale 而不是 dpi_scale:球要的是"一个窗口单位
                      # 画几个位图像素"。Windows 上两者相等,macOS 上不等

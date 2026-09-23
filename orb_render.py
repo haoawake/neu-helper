@@ -56,6 +56,37 @@ DARK = {
     "shadow": (0x00, 0x00, 0x00),
     "shadow_a": 0.44,
 }
+# 「NEU」主题那一档:校徽的黑白红。玻璃底色换成中性的暖白(蓝调白压在
+# 红光上会发脏),流转的两束光一深一浅都取红 —— 只有一支红的话球是死的,
+# 两支同色不同亮度才转得起来。
+NEU = {
+    "glass": (0xEC, 0xE6, 0xE8),
+    "core_a": 0.16,
+    "rim_a": 0.66,
+    "spec": 0.74,
+    "glow_a": 0.64,
+    "glow_1": (0xE0, 0x22, 0x3F),
+    "glow_2": (0xFF, 0x7A, 0x8C),
+    "shadow": (0x00, 0x00, 0x00),
+    "shadow_a": 0.46,
+}
+
+# 按名字挑的配色。空字符串 = 按 dark 在 LIGHT / DARK 之间选。
+# **用模块级开关而不是加参数**:两个宿主(orb_win32 / orb_cocoa)只知道
+# "现在是不是深色",不知道主题叫什么名字,而它们各有一条画图的路径 ——
+# 与其在三处签名上都挂一个参数,不如让 server 在偏好变化时把这儿拨一下。
+PALETTES = {"neu": NEU}
+THEME = ""
+
+
+def set_theme(name: str | None) -> None:
+    """拨到某一档配色。认不出的名字一律回到"按深浅选"。"""
+    global THEME
+    THEME = name if name in PALETTES else ""
+
+
+def palette(dark: bool) -> dict:
+    return PALETTES.get(THEME) or (DARK if dark else LIGHT)
 
 
 def canvas_size(diameter: int, pad: int) -> int:
@@ -78,7 +109,7 @@ def render_ball(f, diameter: int, pad: int, dark: bool, scale: float = 1.0,
     alpha 是逐像素算出来的:球心低(能透到桌面)、边缘高(轮廓立得住)、
     光晕走过的地方再加一点(看起来像里面有东西在流)。
     """
-    pal = DARK if dark else LIGHT
+    pal = palette(dark)
     w, h = f.w, f.h
     r = diameter * 0.5 * scale
     if r < 2:

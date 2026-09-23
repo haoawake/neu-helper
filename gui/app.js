@@ -5106,7 +5106,8 @@ function applyPrefs(prefs) {
   const root = document.documentElement;
   const p = state.prefs;
 
-  root.dataset.theme = p.theme === 'light' || p.theme === 'dark' ? p.theme : 'auto';
+  // neu = 校徽那三色(黑白红)的深色皮,和 light/dark 并列摆在设置里
+  root.dataset.theme = ['light', 'dark', 'neu'].includes(p.theme) ? p.theme : 'auto';
   root.style.setProperty('--glass-a', String(p.glass));
   root.style.setProperty('--blur', (p.blur || 0) + 'px');
   document.body.dataset.blur = Number(p.blur) > 0 ? 'on' : '0';

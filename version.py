@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-VERSION = "2.0.11"
+VERSION = "2.1.0"
 
 # 更新从这个仓库的 Releases 拿
 REPO = "haoawake/neu-helper"
