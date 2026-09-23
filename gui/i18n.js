@@ -262,6 +262,14 @@ const FRAGS = [
   [/你这个窗口还跑着 v([\d.]+),重启一下生效/g,
    'this window is still running v$1 - restart to apply'],
   [/点「更新并重启」快进到最新/g, 'hit Update and restart to fast-forward'],
+  /* 版本那一行:当前 vX · 最新 vY —— 怎么办 */
+  [/当前 v/g, 'now v'],
+  [/最新 v/g, 'latest v'],
+  [/ —— 重启生效/g, ' - restart to apply'],
+  [/ —— 可以更新/g, ' - update available'],
+  [/ —— 已是最新/g, ' - up to date'],
+  [/ —— 源码落后 (\d+) 个提交/g, ' - $1 commits behind'],
+
   [/检测到更新,(\d+) 个版本的更新内容如下:/g,
    'An update is available. Here is what changed across $1 versions:'],
 
@@ -269,6 +277,10 @@ const FRAGS = [
   [/这条是从邮件里抽出来的/g, 'This came out of an email'],
   [/。时间留空 = 全天,摆到顶上那条全天条里;删掉不会再回来。/g,
    '. Leave the time empty for an all-day entry in the strip at the top; deleting one is permanent.'],
+
+  // **兜底,放在最后。** 前面的规则可能只换走半句,留下一个光秃秃的「——」。
+  // 破折号在英文里不这么用,统一收成一个连字符
+  [/ —— /g, ' - '],
 ];
 
 /* ── 表。左边是界面上的中文原文,一字不差 ──

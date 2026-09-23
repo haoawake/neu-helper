@@ -2975,6 +2975,17 @@ async function fixSetup() {
    这条横幅**不复用 #banner**:那个是仪表盘报错的位置、每次刷新会被清掉,
    而"有新版本"应该一直挂着直到你处理它。 */
 
+/* 版本号比大小。"3.0.10" 要排在 "3.0.9" 后面,所以不能按字符串比。 */
+function cmpVer(a, b) {
+  const pa = String(a).replace(/^v/, '').split('.').map(Number);
+  const pb = String(b).replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
 function renderUpdate(info, job) {
   // **空对象不许覆盖已经拿到的那份。** `{}` 在 JS 里是真值,原来写成
   // `info || state.upd` 就会被它冲掉 —— 而 push_update 在第一次成功检查
@@ -3026,7 +3037,7 @@ function renderUpdate(info, job) {
   if (!show && $('updNotes')) $('updNotes').hidden = true;
   if (show) {
     txt.textContent = stale
-      ? `代码已经更新到 v${i.latest} —— 你这个窗口还跑着 v${i.current},重启一下生效`
+      ? `代码已经更新到 v${i.disk_version || i.latest} —— 你这个窗口还跑着 v${i.current},重启一下生效`
       : relNew
         ? `有新版本 v${i.latest}`
           + (i.published ? `(${i.published})` : '')
@@ -3035,15 +3046,26 @@ function renderUpdate(info, job) {
     // 源码版没有 Release notes 可看,提交标题就是"改了什么"
     bar.title = relNew ? '' : (i.git_subjects || []).join('\n');
   }
-  // **当前版本任何时候都要看得见。** 原来只在"已经是最新"那一支里念,
-  // 有更新的时候反而只说新版本号 —— 而那正是你最想知道"我现在是多少"的时候
+  // **两个版本号永远都摆出来:我现在是多少、最新是多少。**
+  //
+  // 原来是按状态拼不同的话,结果 stale 那一支写成「当前 vX · 代码已是 vY」,
+  // 而 Y 取的是 **Release** 的版本号 —— 可"代码已是"说的明明是**磁盘上**那份。
+  // 两个数一样的时候(刚发完版、Release 和磁盘同步了)就成了
+  // 「当前 v3.0.2 · 代码已是 v3.0.2」,同一个号说两遍,等于没说。
+  //
+  // 现在:当前取内存里的,最新取 **Release 和磁盘里更大的那个**(源码版的磁盘
+  // 可能比任何 Release 都新),后面才跟一句"该怎么办"。
   const cur = i.current || state.updVersion || '';
-  const head = cur ? `当前 v${cur}` : '';
-  setUpdState(
-    stale ? `${head} · 代码已是 v${i.latest},重启生效`
-      : relNew ? `${head} · 有新版本 v${i.latest}`
-        : gitN ? `${head} · 源码落后 ${gitN} 个提交`
-          : (i.latest ? `已经是最新的(v${cur || i.latest})` : head));
+  const newest = [i.latest, i.disk_version].filter(Boolean)
+    .sort(cmpVer).pop() || '';
+  const bits = [];
+  if (cur) bits.push(`当前 v${cur}`);
+  if (newest) bits.push(`最新 v${newest}`);
+  const tail = stale ? '重启生效'
+    : relNew ? '可以更新'
+      : gitN ? `源码落后 ${gitN} 个提交`
+        : (newest && cur && newest === cur ? '已是最新' : '');
+  setUpdState(bits.join(' · ') + (tail ? ` —— ${tail}` : ''));
   // **一个按钮,文案随状态变。** 用户不该先判断"我属于哪种情况"再选按钮:
   //   有新版本 / 源码落后 -> 更新并重启(先换代码,再重起,顺序就是这个)
   //   代码已新、进程旧     -> 重启生效(没东西可换,只差重起)
