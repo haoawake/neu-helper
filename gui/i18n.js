@@ -422,6 +422,8 @@ const EN = {
   '跟随系统': 'System',
   '浅色': 'Light',
   '深色': 'Dark',
+  '海边': 'Beach',
+  '像素': 'Pixel',
   '语言': 'Language',
   '玻璃模糊': 'Glass blur',
   '表面不透明度': 'Surface opacity',

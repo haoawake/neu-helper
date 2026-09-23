@@ -1900,7 +1900,10 @@ DEFAULT_PREFS = {
     "updateToast": True,
     # 点过「跳过这个版本」的那个版本号 —— 它再也不会提醒
     "skipVersion": "",
-    "theme": "auto",        # auto | light | dark | neu(校徽黑白红,深色的一张皮)
+    # auto | light | dark | neu | beach | pixel。
+    # 后三个不只是换色:neu 是深色皮,beach/pixel 连圆角、投影、缓动、
+    # 字体一起换(见 gui/app.css 里那两段)
+    "theme": "auto",
     "lang": "zh",           # 界面语言 zh | en。也决定模型用哪门语言回答
     "mode": "full",         # orb | chat | full
     "blur": 26,             # 玻璃模糊半径(px),0 = 关掉 backdrop-filter
@@ -2015,8 +2018,8 @@ def dark_mode() -> bool:
     theme = read_prefs().get("theme")
     if theme in ("dark", "neu"):
         return True                     # neu 是深色的一张皮,不是第三种明暗
-    if theme == "light":
-        return False
+    if theme in ("light", "beach", "pixel"):
+        return False                    # 这两档都是浅底的
     return desktop.system_dark()
 
 

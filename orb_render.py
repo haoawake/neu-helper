@@ -75,7 +75,35 @@ NEU = {
 # **用模块级开关而不是加参数**:两个宿主(orb_win32 / orb_cocoa)只知道
 # "现在是不是深色",不知道主题叫什么名字,而它们各有一条画图的路径 ——
 # 与其在三处签名上都挂一个参数,不如让 server 在偏好变化时把这儿拨一下。
-PALETTES = {"neu": NEU}
+# 海边:浅水的绿松石配一点珊瑚橘,玻璃本身偏暖白 —— 像阳光下的水珠
+BEACH = {
+    "glass": (0xFF, 0xFA, 0xF0),
+    "core_a": 0.17,
+    "rim_a": 0.78,
+    "spec": 0.95,
+    "glow_a": 0.56,
+    "glow_1": (0x2E, 0xC4, 0xCE),
+    "glow_2": (0xFF, 0xA8, 0x70),
+    "shadow": (0x0D, 0x5A, 0x64),
+    "shadow_a": 0.24,
+}
+# 像素:这一档要的不是"玻璃球",是一颗**实心的彩球**。
+# core_a 拉到接近 1、rim_a 拉满、高光压到很低 —— 透明感和柔和高光正是
+# 像素画风的反面。真正的方块感做不到(球的形状是 render_ball 算出来的圆),
+# 但"不透明 + 硬边 + 单色"已经足够和玻璃那套区分开。
+PIXEL = {
+    "glass": (0xD1, 0x3B, 0x3B),
+    "core_a": 0.94,
+    "rim_a": 1.0,
+    "spec": 0.16,
+    "glow_a": 0.30,
+    "glow_1": (0xE0, 0xA5, 0x00),
+    "glow_2": (0x3F, 0x9E, 0x3F),
+    "shadow": (0x20, 0x20, 0x3A),
+    "shadow_a": 0.55,
+}
+
+PALETTES = {"neu": NEU, "beach": BEACH, "pixel": PIXEL}
 THEME = ""
 
 

@@ -5131,19 +5131,35 @@ const PREF_FALLBACK = {
   mailSort: 'date_desc',
 };
 
+/* 自己定死这两项的主题。像素那一档:玻璃是这套画风的反面,半透明 + 模糊
+   会把方角硬边全糊掉,所以不论滑块摆哪儿都按这个来。 */
+const THEME_LOCK = {
+  pixel: { glass: 1, blur: 0 },
+};
+
 function applyPrefs(prefs) {
   state.prefs = Object.assign({}, PREF_FALLBACK, prefs || {});
   const root = document.documentElement;
   const p = state.prefs;
 
-  // neu = 校徽那三色(黑白红)的深色皮,和 light/dark 并列摆在设置里
-  root.dataset.theme = ['light', 'dark', 'neu'].includes(p.theme) ? p.theme : 'auto';
+  // neu / beach / pixel 都和 light、dark 并列摆在设置里。后两个不只是换色,
+  // 圆角、投影、缓动、字体一起换 —— 见 app.css 里那两段
+  const theme = ['light', 'dark', 'neu', 'beach', 'pixel'].includes(p.theme)
+    ? p.theme : 'auto';
+  root.dataset.theme = theme;
   // 语言只在启动时接一次。切语言走的是「存偏好 + 刷新页面」那条路
   // (见 wirePrefs),所以这里不用管从英文切回中文
   if (!state.i18nOn) { state.i18nOn = true; startI18n(p.lang); }
-  root.style.setProperty('--glass-a', String(p.glass));
-  root.style.setProperty('--blur', (p.blur || 0) + 'px');
-  document.body.dataset.blur = Number(p.blur) > 0 ? 'on' : '0';
+  // **有的主题自己说了算,滑块得让路。**
+  // 玻璃不透明度和模糊半径是**内联**写在 :root 上的(滑块要能实时预览),
+  // 内联样式压过任何 CSS 规则 —— 所以像素档想要"不透明、零模糊"这件事
+  // 没法在 .css 里表达,只能在这儿钉死。
+  const lock = THEME_LOCK[theme] || {};
+  const glass = lock.glass !== undefined ? lock.glass : p.glass;
+  const blur = lock.blur !== undefined ? lock.blur : (p.blur || 0);
+  root.style.setProperty('--glass-a', String(glass));
+  root.style.setProperty('--blur', blur + 'px');
+  document.body.dataset.blur = Number(blur) > 0 ? 'on' : '0';
   document.body.classList.toggle('no-anim', p.anim === false);
   state.showDismissed = p.showDismissed !== false;
   if (p.mailSort) state.mailSort = p.mailSort;

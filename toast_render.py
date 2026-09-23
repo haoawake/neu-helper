@@ -42,10 +42,13 @@ def _rgba(r, g, b, a):
 THEME = ""
 
 
+_THEMES = ("neu", "beach", "pixel")
+
+
 def set_theme(name: str | None) -> None:
     """拨到某一档配色。认不出的名字一律回到"按深浅选"。"""
     global THEME
-    THEME = name if name == "neu" else ""
+    THEME = name if name in _THEMES else ""
 
 
 def colors(dark: bool):
@@ -53,6 +56,13 @@ def colors(dark: bool):
     if THEME == "neu":
         # 中性灰而不是深色主题那个带蓝的 (32,39,51) —— 黑白红里没有蓝的位置
         return (28, 28, 32), (0xF6, 0xF6, 0xF7), (0xBD, 0xBD, 0xC2), 0.58
+    if THEME == "beach":
+        # 暖白卡片 + 深海松的字。影子偏青,和界面里那套对齐
+        return (255, 253, 248), (0x14, 0x3B, 0x42), (0x43, 0x66, 0x6D), 0.26
+    if THEME == "pixel":
+        # 奶油底、墨蓝字。影子在这一档是**实心块**,不该再糊一层柔光,
+        # 所以 alpha 给到很高 —— paint_card 那边画出来就接近硬边
+        return (246, 242, 226), (0x20, 0x20, 0x3A), (0x3C, 0x3C, 0x5C), 0.70
     if dark:
         return (32, 39, 51), (0xF2, 0xF5, 0xFA), (0xC6, 0xCE, 0xDC), 0.55
     return (252, 253, 255), (0x10, 0x14, 0x1C), (0x4A, 0x50, 0x60), 0.30
@@ -67,6 +77,10 @@ def accent(dark: bool):
     """
     if THEME == "neu":
         return (0xEF, 0x2D, 0x47)
+    if THEME == "beach":
+        return (0x0D, 0x7F, 0x8C)
+    if THEME == "pixel":
+        return (0xC0, 0x39, 0x2B)
     return (0x4F, 0x97, 0xEE) if dark else (0x2A, 0x78, 0xD6)
 
 

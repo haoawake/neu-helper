@@ -244,6 +244,189 @@
   --shadow-lg: 0 8px 20px rgba(0, 0, 0, 0.48), 0 24px 60px rgba(0, 0, 0, 0.54);
 }
 
+/* ── 海边:明媚、轻盈、有点甜 ──
+
+   这一档不只是换色。想要的是"中午的沙滩":晒白的沙、浅水的绿松石、一点珊瑚橘,
+   加上更圆的角和更软的影子。玻璃留着 —— 海边本来就是通透的。
+
+   几个刻意的选择:
+   - **影子带色而不是灰。** 中性灰影压在暖沙上会发脏,改成偏青的,像水面的反光
+   - **圆角加大一档**(14 -> 18)。"可爱"在界面上八成就是圆角给的
+   - --ease-spring 弹得更明显一点,动效才活泼;但 --dur 没跟着变长 ——
+     轻盈是"快而软",不是"慢而飘"
+
+   强调色取 #0d7f8c 而不是更亮的绿松石:这一档是浅色底,强调色要当正文链接用,
+   亮一点的青(比如 #22b8c4)压在白上只有 2.4:1,好看但读不了。 */
+:root[data-theme="beach"] {
+  color-scheme: light;
+
+  --plane:          #f7efdd;                       /* 晒白的细沙 */
+  --fleck:          rgba(255, 255, 255, 0.46);
+  /* **浓度要够。** 第一版把这几团调得很克制,出来是一片米白 ——「明媚」没了。
+     浅色底上的大面积柔光本来就比深色底吃亏:同样的 alpha,压在白上几乎看不见。
+     所以这一档的 blob 比别的主题都高 */
+  --blob-1:         rgba(34, 190, 200, 0.46);      /* 浅水 */
+  --blob-2:         rgba(74, 158, 255, 0.34);      /* 远处的海 */
+  --blob-3:         rgba(255, 158, 92, 0.40);      /* 太阳 */
+  --bloom-1:        rgba(34, 190, 200, 0.78);
+  --bloom-2:        rgba(74, 158, 255, 0.60);
+  --bloom-3:        rgba(255, 158, 92, 0.62);
+
+  --glass-1:        rgba(255, 253, 248, var(--glass-a));
+  --glass-2:        rgba(255, 254, 251, calc(var(--glass-a) * .98));
+  --glass-3:        rgba(255, 253, 248, calc(var(--glass-a) + .28));
+  --glass-hover:    rgba(255, 255, 255, calc(var(--glass-a) + .20));
+  --glass-edge:     rgba(255, 255, 255, 0.72);
+  --glass-edge-low: rgba(13, 127, 140, 0.16);
+  --hairline:       rgba(13, 127, 140, 0.14);
+  --wash:           rgba(13, 127, 140, 0.07);
+  --field-edge:     rgba(13, 127, 140, 0.26);
+
+  --text-primary:   #143b42;                       /* 深海松,不是纯黑 */
+  --text-secondary: #43666d;
+  --text-muted:     #7d979c;
+
+  --seq-fill:       #0d7f8c;
+  --seq-fill-lite:  #5ec6cf;
+  --seq-track:      rgba(13, 127, 140, 0.16);
+  --accent:         #0d7f8c;
+  --accent-soft:    rgba(13, 127, 140, 0.16);
+  --accent-wash:    rgba(13, 127, 140, 0.12);
+  --accent-ink:     #0a5f69;
+  --serious-wash:   rgba(255, 146, 92, 0.20);
+  --serious-ink:    #a8481a;
+  --good-wash:      rgba(46, 184, 122, 0.18);
+  --good-ink:       #1c7a52;
+  --good:     #2eb87a;
+  --warning:  #f5b63c;
+  --serious:  #ff925c;
+  --critical: #e0554f;
+
+  /* 圆一点、软一点。影子偏青,像水面反光 */
+  --radius:    18px;
+  --radius-sm: 12px;
+  --radius-lg: 26px;
+  --shadow-sm: 0 1px 2px rgba(13, 90, 100, 0.07), 0 3px 10px rgba(13, 90, 100, 0.06);
+  --shadow-md: 0 3px 8px rgba(13, 90, 100, 0.10), 0 10px 28px rgba(13, 90, 100, 0.10);
+  --shadow-lg: 0 10px 24px rgba(13, 90, 100, 0.14), 0 28px 66px rgba(13, 90, 100, 0.18);
+  --ease-spring: cubic-bezier(0.34, 1.62, 0.58, 1);
+}
+
+/* ── 像素:方的、硬的、没有一点模糊 ──
+
+   这一档是**反玻璃**的:玻璃那套(半透明 + backdrop-filter + 柔和投影)正好是
+   像素画风的反面。所以除了换色,还要:
+
+   - 圆角**全部归零**。像素图里没有抗锯齿的圆角,有也是手画的阶梯
+   - 投影换成**实心偏移块**(4px 4px 0),不是模糊。这是像素 UI 的标志性长相
+   - 模糊关掉、表面全不透明 —— 见 app.js 的 THEME_LOCK,那两个值是滑块用内联
+     样式写在 :root 上的,CSS 压不过去,只能在 JS 那头钉死
+   - 缓动换成 steps():动效走格子,不是丝滑插值
+   - 全站等宽字。真正的点阵字要么得打包一份字体(这个项目不联网、也不想为此
+     多背几百 KB),要么中文没得用 —— 等宽 + 方角 + 硬投影已经够"游戏机"了
+
+   配色走经典掌机那一路:暖奶油底、深墨蓝的线、一支正红当强调。 */
+:root[data-theme="pixel"] {
+  color-scheme: light;
+
+  --plane:          #cfc9b0;
+  --fleck:          rgba(255, 255, 255, 0.18);
+  --blob-1:         rgba(209, 59, 59, 0.10);
+  --blob-2:         rgba(63, 158, 63, 0.10);
+  --blob-3:         rgba(224, 165, 0, 0.12);
+  --bloom-1:        rgba(209, 59, 59, 0.22);
+  --bloom-2:        rgba(63, 158, 63, 0.20);
+  --bloom-3:        rgba(224, 165, 0, 0.24);
+
+  /* 全不透明:像素 UI 没有半透明这回事 */
+  --glass-1:        #f6f2e2;
+  --glass-2:        #fffdf2;
+  --glass-3:        #fffdf2;
+  --glass-hover:    #ffe9a8;
+  --glass-edge:     rgba(255, 255, 255, 0.85);
+  --glass-edge-low: #20203a;
+  --hairline:       #20203a;
+  --wash:           #ece7d3;
+  --field-edge:     #20203a;
+
+  --text-primary:   #20203a;
+  --text-secondary: #3c3c5c;
+  --text-muted:     #6b6b88;
+
+  --seq-fill:       #d13b3b;
+  --seq-fill-lite:  #f08a8a;
+  --seq-track:      #e3dcc6;
+  --accent:         #c0392b;
+  --accent-soft:    #ffd9d3;
+  --accent-wash:    #ffe6e1;
+  --accent-ink:     #8c2a20;
+  --serious-wash:   #ffe3c2;
+  --serious-ink:    #9a5a10;
+  --good-wash:      #d5efd5;
+  --good-ink:       #256b25;
+  --good:     #3f9e3f;
+  --warning:  #e0a500;
+  --serious:  #e07c26;
+  --critical: #c0392b;
+
+  --radius:    0px;
+  --radius-sm: 0px;
+  --radius-lg: 0px;
+  /* 实心偏移块,不是模糊 */
+  --shadow-sm: 2px 2px 0 rgba(32, 32, 58, 0.55);
+  --shadow-md: 4px 4px 0 rgba(32, 32, 58, 0.65);
+  --shadow-lg: 6px 6px 0 rgba(32, 32, 58, 0.75);
+
+  --ease: steps(4, end);
+  --ease-spring: steps(5, end);
+  --dur: 200ms;
+  --dur-fast: 120ms;
+
+  --sans: ui-monospace, "Cascadia Mono", Consolas, "Courier New",
+          "Microsoft YaHei", monospace;
+}
+
+/* 像素档的结构性改动。**只在这一档生效**,别的主题一个字节都不受影响。 */
+:root[data-theme="pixel"] * {
+  /* 圆角一律归零:radius 变量覆盖不到那些写死 50% / 999px 的地方
+     (开关的圆头、状态点、胶囊按钮) */
+  border-radius: 0 !important;
+  /* 玻璃模糊是这套画风的反面 */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 图标按整数倍放大,不要插值糊掉 —— 这一档就是要看见像素 */
+:root[data-theme="pixel"] img { image-rendering: pixelated; }
+/* 主要的面和控件描一圈黑边,像素 UI 的轮廓感全在这儿 */
+:root[data-theme="pixel"] .pane,
+:root[data-theme="pixel"] .card,
+:root[data-theme="pixel"] .sheet,
+:root[data-theme="pixel"] .stat,
+:root[data-theme="pixel"] .btn,
+:root[data-theme="pixel"] .seg,
+:root[data-theme="pixel"] .select,
+:root[data-theme="pixel"] .composer textarea,
+:root[data-theme="pixel"] .ctxmenu,
+:root[data-theme="pixel"] .hint-pill,
+:root[data-theme="pixel"] .msg-user .msg-body {
+  border: 2px solid var(--text-primary);
+}
+/* 面自己的高光斜面收掉:像素里没有"玻璃厚度"这回事 */
+:root[data-theme="pixel"] .pane::before { background: none; }
+:root[data-theme="pixel"] body.is-orbing::after,
+:root[data-theme="pixel"] body.is-unorbing::after { background-color: #cfc9b0; }
+
+:root[data-theme="beach"] .pane::before {
+  background: linear-gradient(
+    168deg,
+    rgba(255, 255, 255, .55) 0%,
+    rgba(255, 255, 255, .18) 40%,
+    transparent 74%
+  );
+}
+:root[data-theme="beach"] body.is-orbing::after,
+:root[data-theme="beach"] body.is-unorbing::after { background-color: #f3ede0; }
+
 * { box-sizing: border-box; }
 
 /* hidden 属性靠 UA 样式的 [hidden]{display:none} 生效,优先级低于任何类选择器。
@@ -753,6 +936,9 @@ body.is-memopeek #panelMemo {
   color: #fff; background: var(--critical);
   padding: 2px 8px; border-radius: 999px;
 }
+
+/* 主题那一排有六个,窄面板里一行放不下 —— 让它折行,别把面板撑破 */
+#segTheme { flex-wrap: wrap; }
 
 /* 对话历史的下拉:标题可能很长,必须能压缩 */
 #chatPick { flex: 1 1 auto; min-width: 0; }
