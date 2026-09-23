@@ -2781,6 +2781,10 @@ body.is-morphing .layout-week { animation: none; }
   font-size: 12.5px;
 }
 .upd-text { flex: 1 1 auto; min-width: 0; color: var(--accent-ink); }
+/* 「上次更新没落地」那条横幅里的补充说明:比正文淡、前面加个分隔点。
+   分成几段是为了能各自翻译(见 app.js 的 renderFailedUpdate) */
+.upd-why { opacity: .78; font-size: 12.5px; }
+.upd-why::before { content: ' · '; opacity: .6; }
 .upd-go, .upd-what, .upd-x {
   appearance: none; border: 0; cursor: pointer; font: inherit;
   border-radius: 8px; padding: 3px 10px; flex: 0 0 auto;

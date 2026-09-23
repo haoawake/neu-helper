@@ -3030,6 +3030,33 @@ function renderUpdate(info, job) {
     : (i.git_subjects || []).length);
 }
 
+/* 上一次点的更新没落地。
+
+   **这条横幅是整条更新链上唯一说真话的地方。** 换文件的是另一个进程
+   (新版 exe 自己装自己),它干完就退了 —— 发起更新的那个进程那会儿早
+   `os._exit(0)` 了,看不到结果。所以只能等装好的这一份起来,拿自己的版本号
+   和"我打算变成哪一版"那张纸条比一比。
+
+   对不上的典型原因就一个:**你跑的那一份不在你以为的地方**(在压缩包里
+   直接双击 exe,或者装在了写不进去的目录)。所以按钮是「打开安装目录」——
+   让他自己看一眼那是哪儿,比解释一百句管用。 */
+function renderFailedUpdate(f) {
+  const bar = $('updFailBar');
+  if (!bar) return;
+  if (!f || !f.to || state.updFailHid) { bar.hidden = true; return; }
+  bar.hidden = false;
+  // 拆成几个文本节点,不拼成一整句 —— 中间夹着版本号和路径的长句子在 i18n
+  // 那张表里永远对不上,拆开之后每一段各自能翻(见 gui/i18n.js 开头的说明)
+  const box = $('updFailText');
+  box.textContent = '';
+  box.appendChild(el('span', null,
+    `上次更新没落地:你点的是 v${f.to},现在跑的还是 v${f.now || f.from}`));
+  box.appendChild(el('span', 'upd-why',
+    '多半是这一份在压缩包或临时目录里跑,或者那个目录写不进去'));
+  if (f.where) box.appendChild(el('span', 'upd-why', `装在 ${f.where}`));
+  bar.title = f.log ? '更新日志(data/update.log)最后几行:\n' + f.log : '';
+}
+
 /* 「跳过这个版本」记在 prefs 里,重开还算数。源码版的提交数每次 fetch
    都在变,记不住也不该记 —— 那种只在这一次会话里收起来。 */
 function skipKey() {
@@ -3124,6 +3151,8 @@ async function loadUpdate() {
     // 后端每次都报当前版本 —— 存下来,info 里没有 current 时用它兜底
     if (d.version) state.updVersion = d.version;
     state.updKind = d.kind;
+    state.updWhere = d.where || '';
+    renderFailedUpdate(d.failed_update);
     renderUpdate(d.info || {}, d.job || {});
     if (!(d.info || {}).latest) setUpdState(`当前 v${d.version}`);
 
@@ -5862,6 +5891,14 @@ function wirePrefs() {
     if (!box.hidden) { box.hidden = true; return; }
     renderUpdNotes();
     box.hidden = false;
+  });
+  $('updFailX').addEventListener('click', () => {
+    // 只收起这一次。纸条留在磁盘上 —— 下次启动要是还没装上,还得再说一遍
+    state.updFailHid = true;
+    $('updFailBar').hidden = true;
+  });
+  $('updFailWhere').addEventListener('click', () => {
+    apiPost('/api/reveal', { what: 'project' }).catch(() => {});
   });
   $('updLater').addEventListener('click', () => {
     // 「跳过这个版本」。**只跳过这一个版本** —— 下一个版本还会再来,

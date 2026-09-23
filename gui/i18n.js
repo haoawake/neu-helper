@@ -180,6 +180,8 @@ const RULES = [
   /* 「甲 —— 乙」这种两段式,两头各自再过一遍表。**放在最后** —— 它宽到
      什么都能匹配,前面任何一条更具体的规则都该先赢。标签的悬停说明
      (「财务 —— 账单、缴费…」)就长这样,两头都在表里、合起来不在。 */
+  [/^上次更新没落地:你点的是 v(.+),现在跑的还是 v(.+)$/,
+   'Last update did not take: you asked for v$1, this is still v$2'],
   [/^(.+?) —— (.+)$/, (m, a, b) => t(a) + ' - ' + t(b)],
 ];
 
@@ -236,6 +238,7 @@ const FRAGS = [
   // 不是星期几,换掉会得到「下Mon」
   [/(?<![上下本每整])周([一二三四五六日])/g, (m, w) => WEEK_EN[w] || m],
   [/^截止 /g, 'Due '],
+  [/^装在 /g, 'Installed at '],
 
   /* 日程 */
   [/现在 (\d+:\d+)/g, 'Now $1'],
@@ -984,6 +987,12 @@ const EN = {
     'One-time codes, login codes, magic links',
   '机器自动发的状态、告警、构建结果、日志':
     'Machine-generated status, alerts, build results, logs',
+
+  /* 「上次更新没落地」那条横幅 */
+  '打开安装目录': 'Open the install folder',
+  '多半是这一份在压缩包或临时目录里跑,或者那个目录写不进去':
+    'Most likely this copy is running from inside the zip or a temp folder, '
+    + 'or that folder is not writable',
 
   /* 悬浮球那条备忘录浮窗自己的标题条 */
   '拖动移动窗口': 'Drag to move the window',

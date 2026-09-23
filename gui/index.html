@@ -80,6 +80,15 @@
       <button type="button" class="upd-go" id="fixGo">补全</button>
       <button type="button" class="upd-x" id="fixLater" title="这次先不提">✕</button>
     </div>
+    <!-- 上次点的更新没落地。**和 updBar 分开** —— 那条说的是"有新版本",
+         这条说的是"你点过了,但它没生效",两件事,同时出现也不冲突。
+         这条横幅存在的理由:换文件的是另一个进程,它干完就退了,发起更新的
+         那个进程永远看不到结果 —— 不在这儿核对一次,失败就是彻底静默的 -->
+    <div id="updFailBar" class="upd-bar is-warn" hidden>
+      <span id="updFailText" class="upd-text"></span>
+      <button type="button" class="upd-go" id="updFailWhere">打开安装目录</button>
+      <button type="button" class="upd-x" id="updFailX" title="知道了">✕</button>
+    </div>
     <div id="updBar" class="upd-bar" hidden>
       <span id="updText" class="upd-text"></span>
       <!-- **只有一个按钮。** 文案随状态变(更新并重启 / 重启生效),但入口

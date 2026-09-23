@@ -50,6 +50,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import applang
 import platform_id
 import version as ver
 from desktop import NO_WINDOW as _NO_WINDOW   # 起子进程不闪黑框
@@ -67,6 +68,12 @@ KEEP = {"data", "CLAUDE.md"}
 #   目录里面的按相对路径挡。copytree 是合并式的,所以光靠 KEEP 挡不住
 #   ——必须在 copytree 的时候显式跳过
 KEEP_INSIDE = {(".claude", "settings.local.json")}
+
+# 新版 exe 一进门就写这个文件 —— 旧进程等到它才敢退。见 Updater._run。
+STARTED = "started"
+# "我打算更新到哪一版"。**放在 data/ 下、不放在 data/update/ 里** ——
+# 后者每次更新开头会被整个删掉,而这张纸条必须活过重启。
+PENDING = "update_pending.json"
 
 
 def _asset_name() -> str:
@@ -204,6 +211,109 @@ def check() -> dict:
     }
 
 
+def mark_pending(here: Path, want: str) -> None:
+    """记一笔"我打算从 A 变成 B"。在旧进程退出之前写。"""
+    if not want:
+        return
+    try:
+        p = Path(here) / "data" / PENDING
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({
+            "from": ver.VERSION, "to": want, "where": str(here),
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass                                       # 记不下也不该挡住更新
+
+
+def take_pending(here: Path) -> dict:
+    """启动时核对上一次更新到底成没成。成了就把纸条撕掉。
+
+    **这是整条链上唯一一处能说真话的地方。** 换文件的活是另一个进程干的,
+    它干完就退了 —— 它成功与否,发起更新的那个进程永远看不到(那时候它已经
+    `os._exit(0)` 了)。所以只能等装好的这一份启动起来,拿自己的版本号和
+    纸条上写的那个比一比。
+
+    对得上 -> 真的更新了,撕掉纸条。
+    对不上 -> 界面上说清楚:你点的是 3.2.3,现在跑的还是 3.2.0,
+              日志在哪、装在哪都一并给出来,别让人对着一个没变的版本号发呆。
+    """
+    p = Path(here) / "data" / PENDING
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(d, dict) or not d.get("to"):
+        p.unlink(missing_ok=True)
+        return {}
+    if ver.parse(ver.VERSION) >= ver.parse(str(d["to"])):
+        p.unlink(missing_ok=True)                  # 到位了(或者更新)
+        return {}
+    d["log"] = _log_tail(Path(here))
+    d["now"] = ver.VERSION
+    return d
+
+
+def _log_tail(here: Path, lines: int = 12) -> str:
+    try:
+        txt = (here / "data" / "update.log").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    return chr(10).join(txt.strip().splitlines()[-lines:])
+
+
+def where_problem(here: Path) -> str:
+    """这个安装目录能就地更新吗。不能就返回一句人话,能就返回空串。
+
+    **这一条是照着一个真实故障写的**:有人点更新,界面说装好了 v3.2.3,
+    重启回来还是 v3.2.0,反复如此。机制本身没毛病(拿真包端到端量过,
+    6 项全拷成、exe 确实换了),问题在于他跑的那一份根本不在他以为的地方。
+
+    两种走法都会这样:
+
+    - **在压缩包里直接双击 exe**。资源管理器会把 zip 解到
+      `%TEMP%` 下面一个 `Temp1_xxx.zip` 目录再运行 —— 更新确实写进了那儿,
+      可下次从压缩包打开,又是原样解压一份旧的出来
+    - 解压在了 Program Files 之类的地方,当前用户写不进去
+
+    第二种在拷文件时会报错(至少还看得见),第一种是彻头彻尾的静默失败:
+    每一步都成功,就是不生效。所以只能在动手之前拦。
+    """
+    here = Path(here)
+    try:
+        probe = here / ".write-probe"
+        probe.write_text("x", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        why = exc.strerror or exc
+        return applang.tr(
+            f"装不进去:{here} 写不了({why})。"
+            "把整个文件夹挪到你自己的目录下(比如「文档」)再试。",
+            f"Cannot install: {here} is not writable ({why}). "
+            "Move the whole folder somewhere you own (Documents, say) "
+            "and try again.")
+    # 临时目录。TEMP 本身就是一个很深的路径,所以比的是"在不在它下面",
+    # 不是相等
+    for var in ("TEMP", "TMP"):
+        root = os.environ.get(var)
+        if not root:
+            continue
+        try:
+            if here.resolve().is_relative_to(Path(root).resolve()):
+                return applang.tr(
+                    "你这一份是**从压缩包里直接运行**的(它在系统临时目录里)。"
+                    "更新会写进去,但下次打开压缩包又是旧的那份 —— 先把 zip "
+                    "里那个文件夹整个解压到别处,从那儿启动,再更新。",
+                    "This copy is running straight out of the zip (it sits in "
+                    "the system temp folder). An update would be written there, "
+                    "but opening the zip again just unpacks the old one - "
+                    "extract the folder from the zip somewhere else, start it "
+                    "from there, then update.")
+        except (OSError, ValueError):
+            pass
+    return ""
+
+
 def disk_version(here: Path) -> str:
     """**磁盘上** version.py 写的版本号。
 
@@ -314,10 +424,20 @@ class Updater:
             except Exception:                      # noqa: BLE001
                 pass
 
-    def start(self, url: str) -> bool:
-        """开始下载并安装。返回有没有真的开跑。"""
+    def start(self, url: str, want: str = "") -> bool:
+        """开始下载并安装。返回有没有真的开跑。
+
+        `want` 是要装成哪一版 —— 只用来记一笔"我打算变成 3.2.3",
+        重启回来核对不上就说出来。
+        """
         if not url:
             self._set(phase="error", error="这个版本没有本平台的安装包")
+            return False
+        bad = where_problem(self.here)
+        if bad:
+            # **先查再下。** 装不进去的话 25MB 下完了也是白下 —— 而且下完之后
+            # 这个进程就退了,那时候再报错根本没人看得见
+            self._set(phase="error", error=bad)
             return False
         if platform_id.IS_MAC:
             # 没在真机上验证过替换 .app 的流程,不拿别人的安装目录做实验
@@ -327,7 +447,7 @@ class Updater:
         if not self._lock.acquire(blocking=False):
             return False
         self._set(phase="downloading", pct=0, msg="正在下载…", error="")
-        threading.Thread(target=self._run, args=(url,), daemon=True,
+        threading.Thread(target=self._run, args=(url, want), daemon=True,
                          name="update").start()
         return True
 
@@ -474,7 +594,7 @@ class Updater:
 
     # ─────────────────── 打包版:换 exe ───────────────────
 
-    def _run(self, url: str) -> None:
+    def _run(self, url: str, want: str = "") -> None:
         try:
             work = self.here / "data" / "update"
             shutil.rmtree(work, ignore_errors=True)
@@ -497,10 +617,31 @@ class Updater:
 
             self._set(phase="applying", msg="正在替换,马上会重启…")
             # 让**新版的 exe** 自己来装自己(理由见模块文档)
-            subprocess.Popen(
+            flag = work / STARTED
+            flag.unlink(missing_ok=True)
+            proc = subprocess.Popen(
                 [str(exe), "--apply-update", str(self.here), str(os.getpid())],
                 cwd=str(staged), close_fds=True)
-            time.sleep(1.2)
+            # **确认它真的起来了再退。** 这一步原来是 `sleep(1.2)` 然后就
+            # `os._exit(0)` —— 那等于把命交给一个还没见着面的进程:杀毒软件
+            # 拦下这个没签名的 exe、或者它自己一启动就崩,用户看到的是
+            # 「点了更新,应用没了」,而且一个字的解释都没有。
+            # 新版 exe 一进门就写 started 这个文件,等到它才算数。
+            for _ in range(150):                   # 最多 15 秒
+                if flag.exists():
+                    break
+                if proc.poll() is not None:
+                    raise RuntimeError(
+                        f"新版程序刚起来就退了(退出码 {proc.returncode})—— "
+                        "多半是被杀毒软件拦了。把安装目录加进白名单再试。")
+                time.sleep(0.1)
+            else:
+                raise RuntimeError(
+                    "新版程序起不来(等了 15 秒没动静)—— 多半是被杀毒软件"
+                    "拦了。什么都没改,你这一份还是好的。")
+            # 记下"我打算变成哪一版"。下次启动核对不上就说出来,
+            # 而不是让人对着一个没变的版本号发呆
+            mark_pending(self.here, want)
             self._set(phase="restarting", msg="正在重启…")
             # 主窗口关掉,进程退出 —— 新进程在等这一刻
             os._exit(0)
@@ -544,6 +685,14 @@ def apply_update(target: Path, wait_pid: int) -> int:
     staged = Path(sys.executable).resolve().parent
     log = target / "data" / "update.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    # **第一件事就是打这个招呼。** 旧进程正卡在这儿等 —— 等到了才敢退。
+    # 起不来(杀毒软件拦了、exe 坏了)的话它就不退,用户至少还有个能用的
+    # 应用和一句解释,而不是"点了更新,应用没了"。
+    try:
+        (staged.parent / STARTED).write_text(
+            time.strftime("%H:%M:%S"), encoding="utf-8")
+    except OSError:
+        pass
 
     def say(m: str) -> None:
         line = f"[{time.strftime('%H:%M:%S')}] {m}"
@@ -565,9 +714,15 @@ def apply_update(target: Path, wait_pid: int) -> int:
     time.sleep(0.8)                                # 给它一点时间松开文件句柄
 
     copied, failed = [], []
-    for item in staged.iterdir():
+    # **exe 放到最后拷。** 版本号是从 exe 里读出来的,它一换,这次更新在
+    # 用户眼里就"生效"了。所以它必须是最后一步 —— 前面任何一样没拷成,
+    # 回滚之后应用还是完完整整的旧版;要是反过来先换 exe,中途失败就得到
+    # 一个新 exe 配旧资源的半成品。
+    items = sorted(staged.iterdir(),
+                   key=lambda p: p.name.lower().endswith(".exe"))
+    for item in items:
         rel = item.name
-        if rel in KEEP or rel == "pkg.zip":
+        if rel in KEEP or rel == "pkg.zip" or rel == STARTED:
             continue
         dst = target / rel
         # 换文件时"被占用"是这类操作最典型的偶发失败 —— 旧进程刚退出,
@@ -599,12 +754,17 @@ def apply_update(target: Path, wait_pid: int) -> int:
 
     if failed:
         # 有东西没拷成:把改了名的退回去,别留一个半新半旧的安装
-        say("有文件没拷成,回滚")
+        say(f"有 {len(failed)} 样没拷成,回滚:" + "; ".join(failed))
         for rel in copied:
             old = (target / rel).with_suffix(Path(rel).suffix + ".old")
             if old.exists():
                 (target / rel).unlink(missing_ok=True)
                 old.rename(target / rel)
+            elif (target / rel).is_dir():
+                # 目录是合并式拷进去的,没有 .old 可退。**照实说** ——
+                # 这一句才让日志对得上现场:回滚之后 exe 是旧的,而这些
+                # 目录里已经混进了新版的文件
+                say(f"({rel} 是合并拷贝的,退不回去 —— 里面是新版的内容)")
         say("回滚完成,启动原来那个版本")
     else:
         say(f"装好了:{len(copied)} 项")

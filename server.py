@@ -299,6 +299,15 @@ class Backend:
 
         # ── 更新
         self.update_info: dict = {}          # 上一次 check() 的结果
+        # 上一次点的更新有没有落地。**启动时立刻核对一次** —— 换文件的是
+        # 另一个进程,它成功与否发起方永远看不到(那时候它已经退了),
+        # 只有装好的这一份起来之后拿自己的版本号去比才知道
+        self.failed_update: dict = updater.take_pending(HERE)
+        if self.failed_update:
+            print("[update] 上次更新没落地:想装 v"
+                  + str(self.failed_update.get("to"))
+                  + ",现在还是 v" + str(self.failed_update.get("now")),
+                  file=sys.stderr, flush=True)
         self.updater = updater.Updater(
             HERE, on_event=lambda st: self.push_update(self.update_info, st))
         # 这个版本已经提醒过了吗 —— 弹窗一个版本只弹一次,不是每次检查都弹
@@ -2116,6 +2125,10 @@ def api_update_get():
                     # Windows 是 install.ps1、macOS 是 install.sh
                     "os": platform_id.NAME,
                     "setup_script": SETUP_SCRIPT,
+                    "where": str(HERE),
+                    # 上次点的更新到底成没成。**只有这一处说得出真话** ——
+                    # 换文件的是另一个进程,它干完就退了
+                    "failed_update": backend.failed_update,
                     "info": backend.update_info,
                     "job": backend.updater.snapshot()})
 
@@ -2172,7 +2185,8 @@ def api_update_apply():
             webbrowser.open(info["page"])
         return jsonify({"ok": False, "opened": True, "kind": kind,
                         "error": "这种安装方式要手动更新,已经打开下载页"})
-    started = backend.updater.start(info.get("asset") or "")
+    started = backend.updater.start(info.get("asset") or "",
+                                    info.get("latest") or "")
     return jsonify({"ok": started, "kind": kind,
                     "job": backend.updater.snapshot()})
 
