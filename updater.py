@@ -109,6 +109,27 @@ def _get_json(path: str):
         return json.loads(r.read() or b"{}")
 
 
+# ---------------------------------------------------------------- 代理
+
+# git 认的是 http.proxy / https.proxy 这两条**配置**,和环境变量、和"我平时
+# 能不能直连"都没关系。在国内装过 Clash 之类的人,这两条多半一直写在全局配置
+# 里 —— 代理开着的时候它是快路,代理没开的时候每一条 git 网络操作都会卡在
+#     Failed to connect to 127.0.0.1 port 7897
+# 而报错里只字不提"这是你自己配的代理",从用户那头看就是"更新坏了"。
+_PROXY_DEAD = re.compile(
+    r"Failed to connect to .*? port \d+|Couldn't connect to proxy|"
+    r"proxy CONNECT aborted|CONNECT tunnel failed", re.I)
+
+# 绕过代理跑一次用的前缀。**只作用于这一条命令**,不动用户的配置 ——
+# 他开着代理的时候那条配置是对的,不该被我们悄悄抹掉。
+NO_PROXY_ARGS = ["-c", "http.proxy=", "-c", "https.proxy="]
+
+
+def proxy_is_dead(out: str) -> bool:
+    """这条 git 是不是栽在"代理连不上"上。"""
+    return bool(_PROXY_DEAD.search(out or ""))
+
+
 def _notes_since(releases: list, current: str) -> list[dict]:
     """比 current 新的那些 Release 的说明,新的在前。
 
@@ -236,14 +257,20 @@ def check_git(here: Path) -> dict:
         return out
 
     def git(*args: str, timeout: int = 60) -> tuple[int, str]:
-        try:
-            p = subprocess.run(
-                [exe, *args], cwd=str(here), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=timeout,
+        def run(pre):
+            return subprocess.run(
+                [exe, *pre, *args], cwd=str(here), capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=timeout,
                 creationflags=_NO_WINDOW)
+        try:
+            p = run([])
+            out = ((p.stdout or "") + (p.stderr or "")).strip()
+            if p.returncode != 0 and proxy_is_dead(out):
+                p = run(NO_PROXY_ARGS)          # 同上,只绕这一条命令
+                out = ((p.stdout or "") + (p.stderr or "")).strip()
         except Exception:                          # noqa: BLE001
             return 1, ""
-        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+        return p.returncode, out
 
     code, upstream = git("rev-parse", "--abbrev-ref",
                          "--symbolic-full-name", "@{u}")
@@ -325,13 +352,31 @@ class Updater:
         它吃掉,于是按固定宽度切出来的文件名少一个字符,界面上显示成
         「本地改过这些文件:erver.py」。测试逮到过一次。
         """
-        p = subprocess.run(
-            [self._git_exe, *args], cwd=str(self.here), capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=timeout,
-            creationflags=_NO_WINDOW)
+        def run(pre):
+            return subprocess.run(
+                [self._git_exe, *pre, *args], cwd=str(self.here),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=timeout, creationflags=_NO_WINDOW)
+
+        p = run([])
+        out = ((p.stdout or "") + (p.stderr or "")).strip()
+        # 栽在"代理连不上"就绕过代理再来一次。**不改用户的配置** ——
+        # 他开着代理的时候那条是对的,只是现在没开(见 proxy_is_dead 上面那段)
+        if p.returncode != 0 and proxy_is_dead(out):
+            print("[update] git 走代理没通,绕过代理重试一次",
+                  file=sys.stderr, flush=True)
+            p2 = run(NO_PROXY_ARGS)
+            if p2.returncode == 0:
+                if raw:
+                    return 0, (p2.stdout or "")
+                return 0, ((p2.stdout or "") + (p2.stderr or "")).strip()
+            # 直连也不行:把**两次**都报出来,不然只看到后一半会以为压根没配代理
+            out = out + chr(10) + "直连也失败:" + (
+                (p2.stdout or "") + (p2.stderr or "")).strip()
+            p = p2
         if raw:
             return p.returncode, (p.stdout or "")
-        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+        return p.returncode, out
 
     def _run_git(self) -> None:
         try:
