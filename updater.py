@@ -402,26 +402,37 @@ class Updater:
                 raise RuntimeError("当前分支没有对应的远端分支,不知道该跟谁更新")
             remote = upstream.split("/")[0]
 
+            # **先看磁盘,再上网。** 磁盘上的代码已经比这个进程新的话,该做的
+            # 就是重启 —— 这个判断一个字节的网络都不需要。原来它排在 fetch
+            # 后面,于是代理没开的人永远走不到:明明只差一次重启,却被一条
+            # 连不上的 fetch 挡死,报错还指向 git。这正是用户撞上的那一幕。
+            disk = disk_version(self.here)
+            if disk and ver.is_newer(disk, ver.VERSION):
+                self._set(phase="restarting",
+                          msg=f"代码已经是 v{disk} 了,正在重启…")
+                self._respawn()
+                time.sleep(1.0)
+                os._exit(0)
+
             self._set(phase="fetching", msg="正在取最新代码…")
             code, out = self._git("fetch", "--tags", remote)
             if code != 0:
+                # 代理连不上这一类,光把 git 的原话抛出去等于让人去查错方向 ——
+                # 那串 127.0.0.1:PORT 看着像程序自己在乱连,其实是他自己
+                # 很久以前配在 git 全局里的代理(见 proxy_is_dead 上面那段)
+                if proxy_is_dead(out):
+                    raise RuntimeError(
+                        "git 走代理没通,绕过代理直连也没成。你的 git 全局配置里"
+                        "写着一个本地代理 —— 代理没开就会这样。要么把代理打开,"
+                        "要么执行:git config --global --unset http.proxy 和 "
+                        "--unset https.proxy。原文:" + out[:200])
                 raise RuntimeError(f"git fetch 失败:{out[:200]}")
 
             code, behind = self._git("rev-list", "--count", f"HEAD..{upstream}")
             code2, ahead = self._git("rev-list", "--count", f"{upstream}..HEAD")
             if code == 0 and behind == "0":
-                # 没东西可快进。但**用户是点了「更新」才走到这儿的** ——
-                # 如果磁盘上的代码已经比这个进程新(之前 pull 过、或者开发时
-                # 改过),真正要做的就是重启,而不是回一句"已经是最新的代码了"
-                # 然后什么都不做。原来那样点下去毫无变化,还和横幅说的
-                # "有新版本"自相矛盾
-                disk = disk_version(self.here)
-                if disk and ver.is_newer(disk, ver.VERSION):
-                    self._set(phase="restarting",
-                              msg=f"代码已经是 v{disk} 了,正在重启…")
-                    self._respawn()
-                    time.sleep(1.0)
-                    os._exit(0)
+                # 没东西可快进。"磁盘比进程新就重启"那一支已经在 fetch 之前
+                # 做过了(挪上去的理由见那儿),走到这里就是真的没什么可做
                 self._set(phase="idle", msg="", error="")
                 self._set(phase="done", msg="已经是最新的代码了")
                 return
