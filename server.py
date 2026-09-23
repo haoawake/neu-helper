@@ -1016,7 +1016,10 @@ class Backend:
             body = rank.get("summary") or m.get("subject") or ""
             if tag:
                 body = f"[{tag}] {body}"
-            self.notify(head, body)
+            # 点这条弹窗 = 直接打开这封信。**只在报单封时给** —— 一次进来
+            # 好几封的话,点开某一封不一定是他想看的那封,那就还是回列表
+            go = f"mail:{m.get('id')}" if (added == 1 and m.get("id")) else "mail"
+            self.notify(head, body, go=go)
 
         threading.Thread(target=run, daemon=True, name="toast-mail").start()
 

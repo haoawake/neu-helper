@@ -3100,6 +3100,14 @@ function skipKey() {
    或者课程表上 —— 那条弹窗就白弹了。所以这里把路铺完:切回学业页、退出
    子视图、把横幅滚进视野、闪一下。 */
 function gotoWhere(where) {
+  // 新邮件那条弹窗:点一下直接开那封信。`mail:<id>` = 开这一封,
+  // 光是 `mail` = 回邮箱列表(一次进来好几封时,点开某一封不一定是他要的那封)
+  if (where === 'mail' || where.indexOf('mail:') === 0) {
+    setPage('mail');
+    const id = where.slice(5);
+    if (id) openMailById(id);
+    return;
+  }
   if (where !== 'update') return;
   setPage('study');
   if (!$('weekView').hidden) closeWeek();
