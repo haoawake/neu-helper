@@ -3387,8 +3387,13 @@ def api_file_reveal():
 
 @app.get("/api/autostart")
 def api_autostart_get():
+    tgt = desktop.autostart_target(HERE)
     return jsonify({"on": desktop.autostart_on(),
-                    "path": str(desktop.autostart_path())})
+                    "path": str(desktop.autostart_path()),
+                    # 开机时实际会被启动的那个东西。拿不到就说明这一份装得
+                    # 不完整(比如源码版少了 startup-gate.vbs)—— 开关点了
+                    # 也建不起来,界面得把原因说出来
+                    "target": str(tgt) if tgt else ""})
 
 
 @app.post("/api/autostart")
@@ -3401,7 +3406,17 @@ def api_autostart_set():
     """
     want = bool((request.get_json(silent=True) or {}).get("on"))
     got = desktop.set_autostart(HERE, want)
-    return jsonify({"ok": got == want, "on": got,
+    err = ""
+    if want and not got:
+        # **只有一种失败原因**:指不到可启动的东西(见 autostart_target)。
+        # 那时候 set_autostart 什么都不建 —— 与其留一个开机报错的死链接,
+        # 不如把话说清楚
+        err = applang.tr(
+            f"这一份装得不完整:{HERE} 里找不到开机要启动的程序,"
+            "所以没建。跑一次装机脚本就好。",
+            f"This copy is incomplete: nothing to launch was found in {HERE}, "
+            "so nothing was created. Re-run the setup script.")
+    return jsonify({"ok": got == want, "on": got, "error": err,
                     "path": str(desktop.autostart_path())})
 
 

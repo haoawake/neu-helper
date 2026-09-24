@@ -123,7 +123,7 @@ def install_kind(here: Path) -> str:
     git       git clone 的源码版(fetch + merge --ff-only)
     source    源码但没有 .git(无从更新起,只能提示去下载)
     """
-    if getattr(sys, "frozen", False):
+    if platform_id.IS_FROZEN:
         return "packaged"
     return "git" if (here / ".git").is_dir() else "source"
 
@@ -310,12 +310,7 @@ def bundle_of(here: Path) -> Path | None:
     打包版的 macOS 上 `here` 是 `NEU Helper.app/Contents/MacOS` ——
     要换的是整个 .app,不是这一层。
     """
-    if not platform_id.IS_MAC:
-        return None
-    for p in (here, *here.parents):
-        if p.suffix == ".app":
-            return p
-    return None
+    return platform_id.app_bundle(here)
 
 
 def stage_root(here: Path) -> Path:

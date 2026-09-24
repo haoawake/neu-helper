@@ -119,73 +119,182 @@ _keep = None                      # 故意不释放:进程活着,锁就该一直
 
 # ---------------------------------------------------------------- 开机自启
 
-# 开机那一项叫什么。装机脚本(install.ps1 / install.sh)建的就是这两个,
-# 设置里的开关认的也是它们 —— 名字必须对得上,不然会各建各的。
+# 开机那一项叫什么。**四条路径必须对得上**:两个装机脚本各建一个,
+# 设置里那个开关既要认出它们、也要能自己建一个一样的。
+#
+#                    Windows 启动文件夹          macOS LaunchAgents
+#   源码版装机       NEU Helper.lnk              com.neuhelper.gate.plist
+#   (install.*)      -> wscript startup-gate.vbs -> bash startup-gate.sh
+#   打包版装机       NEU Helper.lnk              com.neuhelper.app.plist
+#   (setup.*)        -> NEU Helper.exe           -> open -a NEU Helper.app
+#
+# **两种安装方式指向的东西不一样,这是对的。** 源码版走「闸门」——
+# 那个脚本每天只放行一次,否则每次登录都弹一个窗口;而闸门是个 .vbs/.sh,
+# 它启动的是 Python 脚本,打包版里根本没有 Python,也没有这两个脚本文件
+# (zip 里只有两个 exe / 一个 .app)。所以打包版直接指向程序本身 ——
+# 每次登录都起,靠单实例锁和"每日简报一天只发一次"兜住,setup.* 里
+# 是同一个取舍。
 AUTOSTART_NAME = "NEU Helper"
+
+# macOS 上两个 plist 的 Label / 文件名都不一样,所以**读的时候两个都要看**。
+# 只认其中一个的后果:打包版明明开着自启,设置里那个开关却显示关;
+# 一点开又建出第二个 agent,一点关只删掉其中一个。
+MAC_AGENT_SRC = "com.neuhelper.gate.plist"     # 源码版(install.sh)
+MAC_AGENT_APP = "com.neuhelper.app.plist"      # 打包版(setup_mac.sh)
+
+
+def autostart_paths() -> list[Path]:
+    """**所有**可能的开机项 —— 读状态、关闭时都按这一组来。"""
+    d = autostart_dir()
+    if platform_id.IS_MAC:
+        return [d / MAC_AGENT_SRC, d / MAC_AGENT_APP]
+    return [d / (AUTOSTART_NAME + ".lnk")]
 
 
 def autostart_path() -> Path:
-    """开机那一项的完整路径。"""
+    """**这一份**该写哪个文件 —— 按当前是打包版还是源码版挑。"""
+    d = autostart_dir()
     if platform_id.IS_MAC:
-        return autostart_dir() / "com.neuhelper.gate.plist"
-    return autostart_dir() / (AUTOSTART_NAME + ".lnk")
+        return d / (MAC_AGENT_APP if platform_id.IS_FROZEN else MAC_AGENT_SRC)
+    return d / (AUTOSTART_NAME + ".lnk")
 
 
 def autostart_on() -> bool:
-    return autostart_path().is_file()
+    return any(p.is_file() for p in autostart_paths())
 
 
-_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+def autostart_target(here: Path) -> Path | None:
+    """开机时**实际会被启动的那个东西**。拿不准就返回 None。
+
+    存在的意义是"建之前先确认它在":指着一个不存在的文件建快捷方式,
+    开机时 Windows 会弹一句「找不到脚本文件」、macOS 则是静悄悄什么都不发生,
+    而设置里那个开关还显示"已开启"。这种故障没有任何线索。
+    """
+    here = Path(here)
+    if platform_id.IS_MAC:
+        app = platform_id.app_bundle(here)
+        if app is not None:                        # 打包版:启动 .app 本身
+            return app
+        gate = here / "startup-gate.sh"            # 源码版:每日闸门
+        return gate if gate.is_file() else None
+    if platform_id.IS_FROZEN:
+        exe = here / "NEU Helper.exe"
+        return exe if exe.is_file() else None
+    gate = here / "startup-gate.vbs"
+    return gate if gate.is_file() else None
+
+
+_PLIST_SRC = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
 "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.neuhelper.gate</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>{gate}</string></array>
+  <array><string>/bin/bash</string><string>{target}</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+"""
+
+# 打包版用 `open -a`,不是直接跑 bundle 里那个可执行文件 —— 那样起来的进程
+# 没有 .app 的身份(没有 Dock 图标、拿不到激活),和 setup_mac.sh 里的取舍一致。
+_PLIST_APP = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+"http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.neuhelper.app</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/bin/open</string><string>-a</string>
+  <string>{target}</string></array>
   <key>RunAtLoad</key><true/>
 </dict></plist>
 """
 
 
+def _launchctl(plist: Path, load: bool) -> None:
+    """把 agent 装上 / 卸下来。**失败不抛** —— plist 文件本身已经落盘,
+    下次登录照样生效;launchctl 只是让它这一次就立刻生效。
+
+    bootstrap/bootout 是新写法,老系统上不认,所以退回 load/unload。
+    setup_mac.sh 里用的是同一组回退。
+    """
+    uid = os.getuid() if hasattr(os, "getuid") else 0
+    pairs = ([["launchctl", "bootstrap", f"gui/{uid}", str(plist)],
+              ["launchctl", "load", "-w", str(plist)]] if load else
+             [["launchctl", "bootout", f"gui/{uid}/{plist.stem}"],
+              ["launchctl", "unload", "-w", str(plist)]])
+    for cmd in pairs:
+        try:
+            if subprocess.run(cmd, capture_output=True,
+                              timeout=15).returncode == 0:
+                return
+        except Exception:                          # noqa: BLE001
+            pass
+
+
 def set_autostart(here: Path, on: bool) -> bool:
     """开 / 关开机自启。返回操作之后的**实际**状态,不是你要求的那个。
 
-    **两个平台指的都是「闸门」而不是应用本身。** 闸门每天只放行一次
-    (startup-gate.vbs / startup-gate.sh),否则每次登录、每次重启都弹一个窗口。
+    关:把 autostart_paths() 里的**每一个**都清掉(macOS 上两个 plist 都删)。
+    只删自己那一个的话,另一种安装方式留下的 agent 还在,表现是"关了还是会
+    自己启动"。
 
-    Windows 上造 .lnk 走的是 WScript.Shell:纯 Python 拼 IShellLink 的 COM
-    调用又长又脆,而 PowerShell 是系统自带的 —— install.ps1 建这个快捷方式用的
-    也正是同一段,两边行为一致。
+    开:先确认要指向的东西真的存在(autostart_target),不存在就什么都不建 ——
+    宁可开关弹回去,也不要建一个开机报错的死链接。
     """
-    target = autostart_path()
+    here = Path(here)
     if not on:
-        try:
-            target.unlink()
-        except (FileNotFoundError, OSError):
-            pass
+        for p in autostart_paths():
+            if platform_id.IS_MAC and p.is_file():
+                _launchctl(p, load=False)
+            try:
+                p.unlink()
+            except (FileNotFoundError, OSError):
+                pass
         return autostart_on()
 
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target = autostart_target(here)
+    if target is None:
+        return autostart_on()                      # 指不到东西,不建
+
+    dst = autostart_path()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    # 另一种安装方式留下的那一个要清掉,免得两个开机项并存
+    for p in autostart_paths():
+        if p != dst and p.is_file():
+            if platform_id.IS_MAC:
+                _launchctl(p, load=False)
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
     if platform_id.IS_MAC:
-        gate = here / "startup-gate.sh"
-        target.write_text(_PLIST.format(gate=gate), encoding="utf-8")
-        try:
-            subprocess.run(["launchctl", "load", "-w", str(target)],
-                           capture_output=True, timeout=15)
-        except Exception:                          # noqa: BLE001
-            pass
+        tpl = _PLIST_APP if platform_id.app_bundle(here) else _PLIST_SRC
+        dst.write_text(tpl.format(target=target), encoding="utf-8")
+        _launchctl(dst, load=True)
         return autostart_on()
 
-    gate = here / "startup-gate.vbs"
-    icon = here / "gui" / "icon.ico"
+    # Windows:造 .lnk 走 WScript.Shell —— 纯 Python 拼 IShellLink 的 COM 调用
+    # 又长又脆,而 PowerShell 是系统自带的。install.ps1 / setup.ps1 建这个
+    # 快捷方式用的也正是同一段,三处行为一致。
+    if platform_id.IS_FROZEN:
+        # 打包版:直接指向 exe。图标从 exe 自己身上取 —— gui/ 在 exe 里面,
+        # 磁盘上没有 gui/icon.ico 这个文件
+        run, args, icon = str(target), "", f"{target},0"
+    else:
+        run = str(Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                  / "System32" / "wscript.exe")
+        args = f'"{target}"'
+        ico = here / "gui" / "icon.ico"
+        icon = f"{ico},0" if ico.is_file() else f"{run},0"
     ps = ";".join([
         "$w = New-Object -ComObject WScript.Shell",
-        "$s = $w.CreateShortcut('" + str(target) + "')",
-        "$s.TargetPath = Join-Path $env:SystemRoot 'System32\\wscript.exe'",
-        "$s.Arguments = '\"" + str(gate) + "\"'",
+        "$s = $w.CreateShortcut('" + str(dst) + "')",
+        "$s.TargetPath = '" + run + "'",
+        "$s.Arguments = '" + args + "'",
         "$s.WorkingDirectory = '" + str(here) + "'",
         "$s.Description = 'Open the Canvas study assistant at logon'",
-        "$s.IconLocation = '" + str(icon) + ",0'",
+        "$s.IconLocation = '" + icon + "'",
         "$s.WindowStyle = 7",
         "$s.Save()",
     ])

@@ -5557,7 +5557,10 @@ async function syncAutostart() {
   try {
     const d = await apiGet('/api/autostart');
     b.setAttribute('aria-checked', String(!!d.on));
-    b.title = d.path || '';
+    // 悬停时把"开机项在哪、开机会启动什么"都说出来。后者在打包版和源码版
+    // 上是不同的东西(exe / 每日闸门脚本),看一眼就知道这份装对没有
+    b.title = [d.path, d.target && `开机启动:${d.target}`]
+      .filter(Boolean).join('\n');
   } catch (e) { /* 拿不到就保持现状,别把开关摆成误导性的状态 */ }
 }
 
@@ -6303,7 +6306,10 @@ function wirePrefs() {
       const r = await apiPost('/api/autostart', { on: want });
       b.setAttribute('aria-checked', String(!!r.on));
       b.title = r.path || '';
-      if (r.ok === false) hint(want ? '没能加上开机项' : '没能去掉开机项');
+      // 后端给了原因就念原因 —— 「没能加上开机项」这句话本身不解决任何问题
+      if (r.ok === false) {
+        hint(r.error || (want ? '没能加上开机项' : '没能去掉开机项'));
+      }
     } catch (e) {
       hint('改不了开机项');
     } finally {

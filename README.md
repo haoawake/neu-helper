@@ -153,6 +153,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -Token "14523~xxxxxxxxxxxxxxx
 
 安装流程配置 Canvas 凭据、桌面快捷方式、开机启动、Canvas MCP 与自检。
 
+开机启动可在设置 → 通用中随时开关。两种安装方式指向的目标不同：Release 包
+直接启动应用本体（Windows 为 `NEU Helper.exe`，macOS 为 `open -a` 打开 `.app`）；
+源码版启动每日闸门脚本，该脚本每天只放行一次。开关会识别两种安装方式建立的
+启动项，关闭时一并清除。若当前目录中找不到可启动的目标，开关不会创建任何条目，
+并在界面上说明原因。
+
 ### Windows 源码版
 
 环境要求：Python 3.9+

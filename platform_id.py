@@ -21,6 +21,27 @@ IS_LINUX = sys.platform.startswith("linux")
 # 界面上和日志里报平台用这个,别在别处拼
 NAME = "Windows" if IS_WIN else "macOS" if IS_MAC else sys.platform
 
+# 这一份是 PyInstaller 打出来的吗。**判断安装方式的唯一依据** ——
+# updater 和 desktop 都要问这件事(前者决定怎么替换自己,后者决定开机自启
+# 指向什么),放在这里免得两边各写一遍 getattr(sys, "frozen", False)。
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+
+
+def app_bundle(path) -> Path | None:
+    """`path` 在某个 `.app` 里面的话,返回那个 `.app` 的路径。
+
+    打包版的 macOS 上,程序看到的"自己在哪儿"是
+    `NEU Helper.app/Contents/MacOS` —— 而更新要换的、开机自启要指的,
+    都是外面那个 `.app` 整体。非 macOS 一律返回 None。
+    """
+    if not IS_MAC:
+        return None
+    p = Path(path)
+    for q in (p, *p.parents):
+        if q.suffix == ".app":
+            return q
+    return None
+
 
 def home() -> Path:
     """用户主目录。

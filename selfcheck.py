@@ -305,6 +305,34 @@ if not QUICK:
 
     probe("课程列表", _courses)
 
+# ═══════════════════════════════════════════════ 开机自启
+
+
+def _autostart_sane():
+    """开机自启指向的东西**真的存在**吗。
+
+    **只读,不动启动文件夹。** 查的是"这一份如果要开自启,会指向什么,
+    那个东西在不在" —— 指不到的话开关点了也只会建一个开机报错的死链接。
+
+    四条路径必须对得上:两个装机脚本各建一个,设置里的开关既要认出它们、
+    也要能自己建一个一样的。名字或目标一旦走偏,这条就会亮。
+    """
+    import desktop
+    tgt = desktop.autostart_target(HERE)
+    names = [p.name for p in desktop.autostart_paths()]
+    if tgt is None:
+        kind = "打包版" if platform_id.IS_FROZEN else "源码版"
+        want = ("NEU Helper.exe" if platform_id.IS_FROZEN
+                else ("startup-gate.sh" if platform_id.IS_MAC
+                      else "startup-gate.vbs"))
+        return False, f"{kind}在 {HERE} 里找不到 {want} —— 自启开不起来"
+    on = "已开启" if desktop.autostart_on() else "未开启"
+    return True, f"{on};开机会启动 {Path(tgt).name};认的项:{'、'.join(names)}"
+
+
+probe("开机自启指向的东西在不在", _autostart_sane)
+
+
 # ═══════════════════════════════════════════════ 双端签名对账
 
 
