@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from collections import deque
 from pathlib import Path
@@ -83,12 +84,14 @@ class ChatSession:
         self.total_cost = 0.0
         self.last_text = ""        # 本轮回答的完整正文,给需要落盘的调用方用
         self.last_cost = 0.0
+        self.succeeded = False
         self._last_error = ""      # 最近一次失败的 stderr,决定要不要重试时用
         self._pending_error = ""   # result 事件里的异常,等确定不重试了再报
         self._proc: subprocess.Popen | None = None
         self._busy = threading.Lock()
         self._events: deque[dict] = deque()
         self._elock = threading.Lock()
+        self._cancelled = threading.Event()
 
     # ------------------------------------------------------------ 事件队列
 
@@ -139,6 +142,7 @@ class ChatSession:
         self.session_id = None
 
     def cancel(self) -> None:
+        self._cancelled.set()
         proc = self._proc
         if proc and proc.poll() is None:
             try:
@@ -148,18 +152,28 @@ class ChatSession:
 
     def send_async(self, message: str, fallback_context: str = "") -> None:
         """fallback_context:resume 续不上时用来重建上下文的前文(见 _run)。"""
-        threading.Thread(target=self._run, args=(message, fallback_context),
-                         daemon=True).start()
+        if not self._busy.acquire(blocking=False):
+            self._put({"kind": "error", "text": "上一个问题还在回答,等它结束。"})
+            return
+        self._cancelled.clear()
+        try:
+            threading.Thread(target=self._run, args=(message, fallback_context, True),
+                             daemon=True).start()
+        except Exception:
+            self._busy.release()
+            raise
 
     # ------------------------------------------------------------ 内部实现
 
-    def _run(self, message: str, fallback_context: str = "") -> None:
-        if not self._busy.acquire(blocking=False):
+    def _run(self, message: str, fallback_context: str = "", reserved=False) -> None:
+        if not reserved and not self._busy.acquire(blocking=False):
             self._put({"kind": "error", "text": "上一个问题还在回答,等它结束。"})
             return
         self.last_text = ""
         self.last_cost = 0.0
         self._pending_error = ""
+        self.succeeded = False
+        resumed = self.session_id is not None
         try:
             ok = self._stream(message)
             # 第一次失败而且一个字都没吐出来 —— 最常见的原因是 --resume 指的那个
@@ -167,33 +181,57 @@ class ChatSession:
             # session_id,有存档前文就带上,没有就只发原消息。
             # 这里**不**再要求"必须有前文",原来那个条件让没落盘过的新对话直接
             # 卡死在"退出码 1"上。
-            if not ok and self.session_id is not None:
+            if not ok and resumed and not self.last_text and not self._cancelled.is_set():
                 self._put({"kind": "tool", "text": "会话续不上,重开一段再试"})
                 self.session_id = None
                 self.last_text = ""
                 retry = (fallback_context + chr(10) * 2 + message
                          if fallback_context else message)
                 ok = self._stream(retry)
+            if self._cancelled.is_set():
+                return
             if not ok:
                 self._put({"kind": "error",
                            "text": "claude 执行失败:" + (self._last_error or "没有更多信息")})
-            elif self._pending_error and not self.last_text.strip():
-                # 跑完了但一个字都没出来,那条攒着的异常这时候才有意义
+            elif self._pending_error:
+                # 已经输出部分正文也要报错，不能把截断的回答当成成功。
                 self._put({"kind": "error", "text": self._pending_error})
+            self.succeeded = ok and not self._pending_error
         except Exception as exc:
             self._put({"kind": "error", "text": f"{type(exc).__name__}: {exc}"})
         finally:
-            self._busy.release()
-            self._put({"kind": "done"})
             if self.on_done:
                 # 回调里要落盘,不能让它的异常吞掉整条通道
                 try:
                     self.on_done(self)
                 except Exception as exc:
                     self._put({"kind": "error", "text": f"保存失败: {exc}"})
+            self._busy.release()
+            self._put({"kind": "done"})
 
     def _stream(self, message: str) -> bool:
+        # 文件句柄避开 Windows 命令行长度限制，也避免 stderr 管道写满后死锁。
+        self._last_error = ""
+        self._pending_error = ""
+        with tempfile.TemporaryFile() as prompt, tempfile.TemporaryFile() as errors:
+            prompt.write(message.encode("utf-8"))
+            prompt.seek(0)
+            try:
+                return self._stream_process(prompt, errors)
+            finally:
+                proc = self._proc
+                if proc is not None:
+                    if proc.poll() is None:
+                        proc.kill()
+                    proc.wait()
+                    if proc.stdout:
+                        proc.stdout.close()
+                self._proc = None
+
+    def _stream_process(self, prompt, errors) -> bool:
         """跑一轮。返回是否成功(失败且没出过正文 -> 调用方可以考虑重试)。"""
+        if self._cancelled.is_set():
+            return False
         exe = find_claude()
         if not exe:
             self._put(
@@ -207,7 +245,6 @@ class ChatSession:
         argv = [
             exe,
             "-p",
-            message,
             "--output-format",
             "stream-json",
             "--verbose",
@@ -224,8 +261,8 @@ class ChatSession:
             argv,
             cwd=str(self.project_dir),   # 为了让 CLAUDE.md 和 MCP 权限生效
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,
+            stderr=errors,
+            stdin=prompt,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -233,8 +270,10 @@ class ChatSession:
             creationflags=_NO_WINDOW,
         )
 
+        if self._cancelled.is_set():
+            self._proc.kill()
+
         assert self._proc.stdout is not None
-        got_text = False
         tail_lines: list[str] = []          # 留最后几行,失败时当线索
         for line in self._proc.stdout:
             line = line.strip()
@@ -247,12 +286,12 @@ class ChatSession:
                 ev = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if self._handle(ev):
-                got_text = True
+            self._handle(ev)
 
         self._proc.wait()
-        stderr = (self._proc.stderr.read() if self._proc.stderr else "") or ""
-        if self._proc.returncode != 0 and not got_text:
+        errors.seek(0)
+        stderr = errors.read(4096).decode("utf-8", "replace")
+        if self._proc.returncode != 0:
             code = self._proc.returncode
             detail = stderr.strip()[:500]
             # CLI 失败时经常 stderr 是空的,线索全在 stdout 的最后几行(比如
@@ -269,11 +308,13 @@ class ChatSession:
 
     def _handle(self, ev: dict) -> bool:
         """处理一个事件;返回是否产生了正文文本。"""
+        if self._cancelled.is_set():
+            return False
         etype = ev.get("type")
 
         # session_id 出现在多种事件里,抓到就记住
         sid = ev.get("session_id")
-        if sid and not self.session_id:
+        if sid:
             self.session_id = sid
 
         if etype == "stream_event":

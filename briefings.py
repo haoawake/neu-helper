@@ -203,7 +203,7 @@ class BriefingRunner:
         date = self.pending_date
         self.pending_date = None
         text = (session.last_text or "").strip()
-        if date and text:
+        if date and text and session.succeeded and not session._cancelled.is_set():
             self.store.put(date, text, session.last_cost)
 
     # ------------------------------------------------------------ 调度

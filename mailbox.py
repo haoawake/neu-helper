@@ -241,6 +241,7 @@ def imap_set_seen_many(acc: dict, uids: list[str], seen: bool = True
     ids = [str(u).strip() for u in uids if str(u).strip().isdigit()]
     if not ids:
         return 0, None
+    done = 0
     try:
         with imaplib.IMAP4_SSL(acc["host"], int(acc.get("port") or 993)) as M:
             M.login(acc["email"], acc["password"])
@@ -251,12 +252,12 @@ def imap_set_seen_many(acc: dict, uids: list[str], seen: bool = True
             for i in range(0, len(ids), 900):
                 chunk = ids[i:i + 900]
                 typ, _ = M.uid("store", ",".join(chunk),
-                               "+FLAGS" if seen else "-FLAGS", "(\Seen)")
+                               "+FLAGS" if seen else "-FLAGS", "(\\Seen)")
                 if typ != "OK":
                     return done, "服务器不接受这次标记"
                 done += len(chunk)
     except Exception as exc:                       # noqa: BLE001
-        return 0, f"{type(exc).__name__}: {exc}"
+        return done, f"{type(exc).__name__}: {exc}"
     return done, None
 
 
@@ -365,7 +366,7 @@ def imap_fetch(acc: dict, limit: int = FETCH_BATCH,
             for u in uids:
                 uid = u.decode()
                 mid = f"{acc['id']}#{uid}"
-                if mid in known:
+                if mid in known and uid in flags_by_uid:
                     out.append({"id": mid, "account": acc["id"],
                                 "unread": "\\Seen" not in flags_by_uid.get(uid, ""),
                                 "_flags_only": True})

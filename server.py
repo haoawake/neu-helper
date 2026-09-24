@@ -811,7 +811,9 @@ class Backend:
         return msgs[start:start + per], total
 
     def _mail_chat_done(self, session) -> None:
-        """邮件对话的一轮结束:落进**邮件那套**存档,别和课业混。"""
+        """邮件对话的一轮结束:落进邮件存档。"""
+        if session._cancelled.is_set():
+            return
         cid = self.mail_chats.active_id()
         self.mail_chats.add(cid, "assistant", session.last_text, session.last_cost)
         self.mail_chats.set_session(cid, session.session_id)
@@ -820,8 +822,8 @@ class Backend:
         c = self.mail_chats.get(cid)
         if c is None:
             return False
-        self.mail_chats.set_active(cid)
         self.mail_chat.cancel()
+        self.mail_chats.set_active(cid)
         self.mail_chat.session_id = c.get("session_id")
         self.mail_chat.total_cost = float(c.get("cost") or 0.0)
         return True
@@ -1179,6 +1181,8 @@ class Backend:
         session_id 每轮都记一次而不是只记第一次 —— CLI 有时会在续接时给出新的
         id(压缩上下文之类),记住最新的那个下次才续得上。
         """
+        if session._cancelled.is_set():
+            return
         cid = self.chats.active_id()
         self.chats.add(cid, "assistant", session.last_text, session.last_cost)
         self.chats.set_session(cid, session.session_id)
@@ -1188,8 +1192,8 @@ class Backend:
         c = self.chats.get(cid)
         if c is None:
             return False
-        self.chats.set_active(cid)
         self.chat.cancel()
+        self.chats.set_active(cid)
         self.chat.session_id = c.get("session_id")
         self.chat.total_cost = float(c.get("cost") or 0.0)
         return True
@@ -3065,7 +3069,6 @@ def api_mail_seen_all():
         n, err = mailmod.imap_set_seen_many(acc, uids, True)
         if err:
             errors.append(f"{acc.get('label') or acc_id}:{err}")
-            continue
         done_ids += [f"{acc_id}#{u}" for u in uids[:n]]
     changed = backend.mail.patch_many(done_ids, {"unread": False})
     st = backend.mail_fetcher.snapshot()
