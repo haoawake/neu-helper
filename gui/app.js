@@ -698,6 +698,7 @@ async function loadDashboard(force = false) {
     showBanner(`加载失败:${err}`);
   } finally {
     btn.classList.remove('spinning');
+    window.dispatchEvent(new Event('today-data-changed'));
   }
 }
 
@@ -5042,6 +5043,7 @@ function handleWindowEvent(ev) {
     return;
   }
   if (ev.kind === 'mail') {
+    window.dispatchEvent(new Event('today-data-changed'));
     renderMailState(ev.mail || {});
     // 有新邮件进来就把列表刷一下(在邮箱页的时候)
     if ((ev.mail || {}).added) {
@@ -5053,6 +5055,7 @@ function handleWindowEvent(ev) {
     return;
   }
   if (ev.kind === 'memos') {
+    window.dispatchEvent(new Event('today-data-changed'));
     onMemoEvent(ev);
     return;
   }
@@ -5062,6 +5065,7 @@ function handleWindowEvent(ev) {
   }
   if (ev.kind === 'prefs') {
     applyPrefs(ev.prefs);
+    window.dispatchEvent(new Event('today-data-changed'));
     if (!$('prefsBackdrop').hidden) syncPrefsUI();
     return;
   }

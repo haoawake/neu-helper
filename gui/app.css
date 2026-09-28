@@ -3182,3 +3182,27 @@ body.no-anim .upd-bar.is-flash { animation: none; }
 /* type=time 在 .num 的默认宽度下会把分钟挤掉,只剩「14」 */
 .week-form input[type="time"] { width: 108px; flex: 0 0 auto; }
 #wfCourse { width: 96px; flex: 0 0 auto; }
+
+/* Unified daily action list: uses the same theme tokens as the dashboard. */
+.today-panel { margin: 8px 0 24px; padding: 20px; border: 1px solid var(--hairline); border-radius: 16px; background: var(--glass-2); }
+.today-intro { font-size: 12px; line-height: 1.7; margin: 8px 0 14px; }
+.today-sources { font-size: 11px; line-height: 1.6; color: var(--text-secondary); }
+.today-source-details > summary { cursor: pointer; padding: 8px 10px; background: var(--wash); border-radius: 8px; }
+.today-source-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.today-source { flex: 1 1 150px; min-width: 0; padding: 9px 11px; border-radius: 9px; background: var(--wash); display: flex; flex-direction: column; gap: 4px; font-size: 11px; overflow-wrap: anywhere; }
+.today-source strong { color: var(--text-primary); }
+.today-source small { color: var(--text-secondary); white-space: pre-wrap; }
+.today-source details summary { cursor: pointer; }
+.today-summary { padding: 16px 0 6px; font-size: 12px; font-weight: 650; color: var(--text-secondary); }
+.today-group { margin-top: 12px; }
+.today-group > h3, .today-group > summary { font-size: 12px; font-weight: 700; margin: 0 0 8px; color: var(--text-secondary); }
+.today-group > summary { cursor: pointer; padding: 8px 0; }
+.today-card { border-top: 1px solid var(--hairline); padding: 12px 0; }
+.today-card-meta { font-size: 11px; color: var(--text-secondary); }
+.today-card h3 { margin: 5px 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; color: var(--text-primary); }
+.today-reason { font-size: 11px; line-height: 1.5; margin: 3px 0 8px; color: var(--text-secondary); }
+.today-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 11px; }
+.today-snooze { max-width: 150px; font-size: 11px; padding: 3px 5px; }
+#todayError { color: var(--critical); font-size: 12px; }
+html[data-theme="pixel"] .today-panel, html[data-theme="pixel"] .today-source { border-radius: 0; }
+@media (max-width: 600px) { .today-panel { padding: 14px; } .today-source { flex-basis: 120px; } }

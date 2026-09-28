@@ -101,6 +101,14 @@
          —— 落后三个版本的人该看到这三版加起来改了什么。点「改了什么」展开 -->
     <div id="updNotes" class="upd-notes" hidden></div>
     <div id="banner" class="banner" hidden></div>
+    <section id="todayPanel" class="today-panel" aria-label="今日行动清单">
+      <div class="block-head"><h2 id="todayTitle">今日行动清单</h2><button class="link-btn" id="todayRefresh">同步来源</button></div>
+      <p class="muted today-intro" id="todayIntro">先处理今天的事。所有操作仅影响本清单，不会提交作业或修改邮箱。</p>
+      <div id="todaySources" class="today-sources"></div>
+      <p id="todayError" role="status" hidden></p>
+      <div id="todaySummary" class="today-summary" aria-live="polite">正在读取行动清单…</div>
+      <div id="todayItems"></div>
+    </section>
     <div id="overdueAlert" class="alert" hidden></div>
 
     <!-- 唯一的 hero 数字:距离下一个截止还有多久 -->
@@ -978,5 +986,6 @@
 <!-- i18n 要排在 app.js 前面:app.js 一跑就开始建 DOM 了 -->
 <script src="i18n.js"></script>
 <script src="app.js"></script>
+<script src="today.js"></script>
 </body>
 </html>

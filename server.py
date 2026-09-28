@@ -58,6 +58,7 @@ import mailparts
 import mailevents
 import mailpeople
 import memos
+import today
 import timetable as tt
 import applang
 import orb_render
@@ -156,6 +157,16 @@ class Backend:
     def __init__(self):
         self._client: CanvasClient | None = None
         self._cache: dict | None = None
+        self.today_actions = today.ActionStore(HERE / 'data' / 'today_actions.json')
+        self._today_canvas = {}
+        try:
+            cached = json.loads((HERE / 'data' / 'today_canvas.json').read_text(encoding='utf-8'))
+            if isinstance(cached, dict) and isinstance(cached.get('todo'), list):
+                self._today_canvas = cached
+        except (OSError, ValueError):
+            pass
+        self.canvas_status = {'state': 'idle', 'last_success': self._today_canvas.get('fetched_at_iso'), 'message': ''}
+        self._today_refresh_lock = threading.Lock()
         self._files_cache: dict[int, tuple] = {}
         self._course_cache: dict[int, tuple] = {}
         self._lock = threading.Lock()
@@ -1209,6 +1220,8 @@ class Backend:
     def dashboard(self, force: bool = False) -> dict:
         if self._cache is not None and not force:
             return self._cache
+        self.canvas_status.update(state='loading', message='')
+        announcement_error = ''
         try:
             c = self.client()
             me = c.whoami()
@@ -1218,11 +1231,14 @@ class Backend:
                                {x["id"] for x in courses})
             try:
                 anns = self._announcements(c, courses, int(prefs0.get("annDays", 10)))
-            except Exception:
+            except Exception as exc:
+                announcement_error = str(exc)
                 anns = []   # 公告挂了不该让整个仪表盘空白
         except CanvasConfigError as exc:
+            self.canvas_status.update(state='error', message=str(exc))
             return {"error": "config", "message": str(exc)}
         except Exception as exc:
+            self.canvas_status.update(state='error', message=f'{type(exc).__name__}: {exc}')
             return {"error": "network", "message": f"{type(exc).__name__}: {exc}"}
 
         short = {x["id"]: (x["code"].split(".")[0] or x["code"])[:10] for x in courses}
@@ -1267,6 +1283,7 @@ class Backend:
             "profile": {"name": me.get("name"), "email": me.get("primary_email")},
             "today": f"{now:%m月%d日} {WEEK[now.weekday()]}",
             "fetched_at": f"{now:%H:%M}",
+            "fetched_at_iso": now.astimezone().isoformat(timespec='seconds'),
             "hero": (
                 {
                     "days": round(nearest["days_left"], 1),
@@ -1299,6 +1316,17 @@ class Backend:
             ],
             "announcements": anns,
         }
+        self._today_canvas = self._cache
+        self.canvas_status.update(state='partial' if announcement_error else 'success',
+                                  last_success=self._cache['fetched_at_iso'], message=announcement_error)
+        try:
+            cache_path = HERE / 'data' / 'today_canvas.json'
+            cache_path.parent.mkdir(exist_ok=True)
+            tmp = cache_path.with_suffix('.tmp')
+            tmp.write_text(json.dumps(self._cache, ensure_ascii=False), encoding='utf-8')
+            tmp.replace(cache_path)
+        except OSError:
+            pass
         self._write_snapshot(self._cache)
         # 刚重建完就对一遍:有新作业/新公告弹一条。放在这儿(而不是各个调用方)
         # 是因为仪表盘有好几个入口:手动刷新、简报前刷、定时同步
@@ -1307,6 +1335,42 @@ class Backend:
         except Exception:
             pass
         return self._cache
+
+    def today_view(self) -> dict:
+        courses = (self._cache or self._today_canvas).get('courses', [])
+        schedule = self.schedule.view(courses)
+        prefs = read_prefs()
+        trash = set(prefs.get('mailTrashTags') or [])
+        messages = [m for m in self.rate_messages(self.mail.all(limit=4000))
+                    if not self.is_trash(m, trash)]
+        out = today.build(canvas=self._cache or self._today_canvas,
+                          messages=messages, flags=self.mail_flags.all(),
+                          memo_items=self.memos.all(), schedule=schedule,
+                          events=self.mail_event_list(), marks=self.today_actions.all())
+        out['state_error'] = self.today_actions.error
+        out['sources'] = {'canvas': dict(self.canvas_status),
+                          'mail': self.mail_fetcher.snapshot(),
+                          'accounts': mailmod.accounts_public(),
+                          'schedule': {'parsed': schedule.get('parsed', []),
+                                       'state': dict(self.sched_state)}}
+        return out
+
+    def refresh_today(self) -> bool:
+        if not self._today_refresh_lock.acquire(blocking=False):
+            return False
+        def run():
+            try:
+                self.dashboard(force=True)
+            finally:
+                self._today_refresh_lock.release()
+        self.canvas_status.update(state='loading', message='')
+        try:
+            threading.Thread(target=run, daemon=True, name='today-refresh').start()
+        except Exception:
+            self._today_refresh_lock.release()
+            raise
+        self.mail_fetcher.fetch_now()
+        return True
 
     def _write_snapshot(self, d: dict) -> None:
         """把当前数据落成 markdown,供聊天会话直接读。
@@ -1633,6 +1697,34 @@ def api_dashboard():
     if orb is not None and not d.get("error"):
         orb.set_badge(len(d.get("overdue") or []))
     return jsonify(d)
+
+
+@app.get('/api/today')
+def api_today():
+    return jsonify(backend.today_view())
+
+
+@app.post('/api/today/refresh')
+def api_today_refresh():
+    return jsonify({'started': backend.refresh_today()})
+
+
+@app.post('/api/today/action')
+def api_today_action():
+    d = request.get_json(silent=True) or {}
+    if not isinstance(d, dict):
+        return jsonify({'error': 'Invalid request'}), 400
+    key = d.get('id')
+    row = next((r for r in backend.today_view()['items'] if r['id'] == key), None)
+    if not row:
+        return jsonify({'error': 'This item is no longer available'}), 404
+    if row['status'] == 'source_done':
+        return jsonify({'error': 'Reopen this item in its source'}), 409
+    try:
+        backend.today_actions.set(key, d.get('status'), d.get('until'), item=row)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return jsonify({'ok': True})
 
 
 @app.get("/api/assignment/<int:course_id>/<int:assignment_id>")
