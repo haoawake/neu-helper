@@ -128,7 +128,8 @@ probe("悬浮球和弹窗挑了本平台的宿主", _dispatch)
 def _surface():
     """两套实现的函数面必须一样 —— 少一个就是运行时才炸。"""
     import native_window as nw
-    need = """animate_rect animate_to close cursor_pos dpi_scale render_scale
+    need = """allow_taskbar_minimize animate_rect animate_to close cursor_pos
+    dpi_scale render_scale
     drag_end drag_move drag_start find_own_window get_pre_expand get_rect hide
     is_expanded is_foreground is_iconic is_maximized is_topmost is_visible
     is_window minimize nudge_onscreen restore set_geometry set_pre_expand

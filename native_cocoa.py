@@ -409,6 +409,12 @@ def set_window_icon(handle: int, ico_path: str) -> bool:
     return bool(_main(go))
 
 
+def allow_taskbar_minimize(handle: int) -> bool:
+    """Windows 那边要给 frameless 窗口补一个样式位,点任务栏按钮才会最小化。
+    macOS 没有对应的事 —— 点 Dock 图标按惯例只激活、不收窗口 —— 所以什么都不做。"""
+    return True
+
+
 def is_foreground(handle: int) -> bool:
     """这个窗口是当前的焦点窗口吗。
 

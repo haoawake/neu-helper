@@ -13,6 +13,7 @@
             get_pre_expand / set_pre_expand
   动画      animate_to / animate_rect
   杂        cursor_pos / is_foreground / nudge_onscreen / set_window_icon
+            allow_taskbar_minimize
   拖拽      drag_start / drag_move / drag_end
 
 **"句柄"是一个 int,但两边含义不同。** Windows 上是 HWND;macOS 上是

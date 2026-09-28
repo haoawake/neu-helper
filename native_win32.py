@@ -413,6 +413,24 @@ def set_window_icon(hwnd: int, ico_path: str) -> bool:
     return ok
 
 
+GWL_STYLE = -16
+WS_MINIMIZEBOX = 0x00020000
+
+
+def allow_taskbar_minimize(hwnd: int) -> bool:
+    """让点任务栏按钮能把窗口收下去。
+
+    frameless 的窗口(WinForms 的 FormBorderStyle.None)样式里没有
+    WS_MINIMIZEBOX,而任务栏只对带这一位的窗口做「点一下最小化」——
+    没有它,点按钮永远只是激活。补上这一位不会画出任何按钮(那要
+    WS_CAPTION),只是告诉系统这扇窗可以最小化。
+    """
+    st = user32.GetWindowLongW(hwnd, GWL_STYLE)
+    if not st & WS_MINIMIZEBOX:
+        user32.SetWindowLongW(hwnd, GWL_STYLE, st | WS_MINIMIZEBOX)
+    return bool(user32.GetWindowLongW(hwnd, GWL_STYLE) & WS_MINIMIZEBOX)
+
+
 def is_iconic(hwnd: int) -> bool:
     return bool(user32.IsIconic(hwnd))
 

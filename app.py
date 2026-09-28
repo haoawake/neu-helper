@@ -142,6 +142,9 @@ def setup_orb() -> None:
     ico = desktop.app_icon(server.GUI)
     if ico and native_window.set_window_icon(h, str(ico)):
         log(f"窗口图标已挂上({ico.name})")
+    # frameless 窗口缺一个样式位,点任务栏按钮只会激活、不会最小化
+    if not native_window.allow_taskbar_minimize(h):
+        log("没能给窗口补上最小化样式,点任务栏按钮收不下去")
 
     prefs = server.read_prefs()
     # **先拨主题,再建球。** 球在构造函数里就把所有帧画好了,而换主题不会
