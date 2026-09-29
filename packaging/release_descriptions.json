@@ -1,4 +1,8 @@
 {
+  "v3.7.1": {
+    "title": "v3.7.1 — 修复 macOS 版启动失败",
+    "body": "## 更新内容\n\n### 修复\n\n- 修复 macOS 版启动即退出的问题。悬浮球（`orb_cocoa.py`）与信息弹窗（`toast_cocoa.py`）各定义了一个名为 `_Helper` 的 `NSObject` 子类，PyObjC 按类名在进程级的 Objective-C 运行时中注册类，导入第二个模块时抛出 `objc.error: _Helper is overriding existing Objective-C class`。信息弹窗中的类更名为 `NEUHelperToastDelegate`。\n- 该问题自首个版本起存在，此前所有 macOS 包及 macOS 源码版均受影响。旧版无法启动，因而无法通过应用内更新升级，需要从本页下载 `NEU-Helper-mac-arm64.zip` 替换原有的 `NEU Helper.app`。\n- Windows 版无行为变化。\n\n## 验证\n\n- 新增 2 项回归测试：静态检查项目内所有 `NSObject` 子类的类名互不相同，各平台均执行；在同一进程内依次导入全部 Cocoa 宿主模块，由 CI 的 macOS 构建任务执行。\n- 本地 Windows 环境（Python 3.10 与 3.13）28 项回归测试中 27 项通过，macOS 专用的 1 项跳过。macOS 真机启动尚未验证。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.7.0...v3.7.1"
+  },
   "v3.7.0": {
     "title": "v3.7.0 — 今日行动清单与任务栏最小化",
     "body": "## 更新内容\n\n### 今日行动清单\n\n- 学业页顶部新增今日行动清单，汇总 Canvas 未提交作业、备忘录、标记重点的邮件、课程日程与邮件中提取的日程，按已逾期、今天、待安排、未来 7 天、仅供查看、稍后处理、已处理分组。\n- 每项提供来源跳转：Canvas 作业打开网页，邮件打开单封视图，备忘录定位到对应条目，日程跳转到所在周。\n- 支持本地完成、忽略、稍后处理（1 小时后或明天 09:00）与撤回。状态保存在 `data/today_actions.json`，不提交 Canvas 作业，不修改邮箱或备忘录本身的完成状态；稍后处理到期后重新出现在清单中。\n- 仅标记重点的邮件列为待办；近 7 天内的重要未读邮件单独列为「仅供查看」。\n- 每周、每月备忘录与课程日程按日期生成独立条目，处理某一天的条目不影响其他日期。\n- 来源状态显示 Canvas、各邮箱账户与课程日程的最近同步时间及失败信息。Canvas 数据缓存到 `data/today_canvas.json`，同步失败时沿用上次成功的数据，数据超过 30 分钟时给出提示。\n- 「同步来源」刷新 Canvas 与邮箱；课程日程沿用已有提取结果，不额外调用 Claude。\n- 界面文案支持中英文切换。\n\n### 修复\n\n- Windows 主窗口补上最小化样式，点击任务栏按钮可在最小化与还原之间切换；此前点击任务栏按钮只会激活窗口。\n\n## 验证\n\n- 新增 13 项自动回归测试，覆盖日期分组、时区换算、同名条目、稍后处理到期与跨午夜、邮件分级、重点邮件在本地缓存淘汰后的保留、每周备忘录、日程星期换算、状态持久化与撤回、接口校验、损坏的状态文件，以及 Canvas 同步失败时的数据保留。\n- 提供 `tests/preview_today.py` 离线界面演示，仅使用合成数据。\n- 本地 26 项回归测试全部通过。\n\n## 完整变更\n\nhttps://github.com/haoawake/neu-helper/compare/v3.6.2...v3.7.0"
