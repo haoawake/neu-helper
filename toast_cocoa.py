@@ -124,11 +124,18 @@ class ToastView(NSView):
         self._toast._on_click()
 
 
-class _Helper(NSObject):
-    """NSTimer 要 target + selector,Python 函数不是 selector。"""
+class NEUHelperToastDelegate(NSObject):
+    """NSTimer 要 target + selector,Python 函数不是 selector。
+
+    **类名是整个进程共用的。** NSObject 子类按这个名字注册进 Objective-C
+    运行时,Python 的模块作用域隔不开它:别处再定义一个同名的类,后 import
+    的那个直接抛 `objc.error: ... is overriding existing Objective-C class`。
+    这里原来叫 `_Helper`,和 orb_cocoa 里那个撞了 —— app.py 先 import
+    悬浮球、再 import 弹窗,macOS 版一启动就崩。所以带上项目前缀。
+    """
 
     def initWithToast_(self, toast):
-        self = objc.super(_Helper, self).init()
+        self = objc.super(NEUHelperToastDelegate, self).init()
         if self is not None:
             self._toast = toast
         return self
@@ -205,7 +212,7 @@ class Toast:
                 self, NSMakeRect(0, 0, 10, 10))
             w.setContentView_(self._view)
             self.hwnd = int(w.windowNumber())
-            self._helper = _Helper.alloc().initWithToast_(self)
+            self._helper = NEUHelperToastDelegate.alloc().initWithToast_(self)
         except Exception:                          # noqa: BLE001
             traceback.print_exc()
         finally:

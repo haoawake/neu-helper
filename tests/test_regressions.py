@@ -1,4 +1,5 @@
 import ast
+import importlib
 import io
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import chat_bridge
 import mailbox
+import platform_id
 from briefings import BriefingRunner
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -180,6 +182,27 @@ class MailRegressionTests(unittest.TestCase):
         backend.mail.patch_many.assert_called_once_with(['test#1'], {'unread': False})
         self.assertEqual(result['done'], 1)
         self.assertFalse(result['ok'])
+
+
+class CocoaHostTests(unittest.TestCase):
+    # PyObjC registers every NSObject subclass in the process-wide Objective-C
+    # runtime under its Python name, so two modules defining the same class
+    # name make the second import raise objc.error and the app fail to start.
+
+    def test_objc_class_names_are_unique(self):
+        seen = {}
+        for path in sorted(ROOT.glob('*.py')):
+            for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+                if isinstance(node, ast.ClassDef) and any(
+                        getattr(b, 'attr', getattr(b, 'id', '')).startswith('NS') for b in node.bases):
+                    seen.setdefault(node.name, []).append(path.name)
+        self.assertTrue(seen)
+        self.assertEqual({name: files for name, files in seen.items() if len(files) > 1}, {})
+
+    @unittest.skipUnless(platform_id.IS_MAC, 'Cocoa hosts need PyObjC')
+    def test_cocoa_hosts_import_in_one_process(self):
+        for path in sorted(ROOT.glob('*_cocoa.py')):
+            importlib.import_module(path.stem)
 
 
 if __name__ == '__main__':
