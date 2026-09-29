@@ -46,6 +46,22 @@ def _maybe_apply_update() -> int | None:
     return updater.apply_update(Path(target), pid)
 
 
+# **「新版程序装自己」这个模式在任何重 import 之前就处理掉。** 判断原来只在
+# main() 里,可下面那几行 import 在那之前就已经跑完了:加载 WebView、构造
+# Backend(建存档、迁移偏好)、载入原生窗口模块 —— 暂存区里这一份用不着这些,
+# 白占旧进程那 15 秒的握手窗口;而原生模块载入出错的话(v3.7.0 的 Mac 包就是),
+# 连装新版这一步都走不到。
+if __name__ == "__main__" and "--apply-update" in sys.argv:
+    try:
+        sys.exit(_maybe_apply_update())
+    except Exception:                                  # noqa: BLE001
+        # 和最底下那个兜底一样:pythonw 下没有控制台,不落盘就等于没发生过
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LOG.open("a", encoding="utf-8") as f:
+            f.write("--apply-update 未捕获异常:\n" + traceback.format_exc())
+        sys.exit(1)
+
+
 def _ensure_streams() -> None:
     """pythonw.exe 下 sys.stdout / sys.stderr 是 None。
 

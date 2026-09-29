@@ -76,20 +76,34 @@ CHECK_EVERY = 24 * 3600
 TIMEOUT = 20
 
 
-def until_daily(hour: int, now: float | None = None) -> float:
-    """距离下一个 `hour:00`(本机时间)还有多少秒。
+# 查失败之后隔多久再试。开机 20 秒那次常常网还没通;校园网出口 IP 上
+# GitHub 未认证的额度(每小时 60 次)也可能被别人先用光了
+RETRY_AFTER = 30 * 60
 
-    **至少返回 60 秒。** 正好在整点上算出来会是 0 或者极小的数,
-    那样调用方的 `while True: ...; sleep(until_daily())` 会在那一分钟里
-    空转几百次。夏令时切换那天也靠这个兜底:算出负数一律按一分钟算,
-    下一轮再重新算,最多晚一分钟,不会卡死。
+
+def check_due(now: float, last_ok: float, last_try: float,
+              hour: int = DAILY_HOUR, retry: float = RETRY_AFTER) -> bool:
+    """现在该不该问一次 GitHub。调用方每分钟问一次这个函数。
+
+    - 还没试过(刚启动)→ 该
+    - 上一次失败了(last_try 比 last_ok 新)→ 离上次尝试满 `retry` 才再试
+    - 上一次成功了 → 最近一个 `hour:00` 已经过了、而上次成功在它之前,才该
+
+    **为什么是"每分钟看一次钟"而不是"算好离 09:00 还有几秒、一觉睡过去"**:
+    原来就是后者,可电脑合盖睡眠的那几个小时不算进 sleep 的计时(Windows 的
+    等待超时不计低功耗状态),09:00 那次会往后拖好几个小时,甚至拖过一整天。
+    每分钟看一次钟,醒来一分钟内就补上。简报的调度也是这么做的。
     """
+    if not last_try:
+        return True
+    if last_try > last_ok:
+        return now - last_try >= retry
     import datetime as _dt
-    t = _dt.datetime.fromtimestamp(now) if now else _dt.datetime.now()
-    nxt = t.replace(hour=int(hour) % 24, minute=0, second=0, microsecond=0)
-    if nxt <= t:
-        nxt += _dt.timedelta(days=1)
-    return max(60.0, (nxt - t).total_seconds())
+    t = _dt.datetime.fromtimestamp(now)
+    mark = t.replace(hour=int(hour) % 24, minute=0, second=0, microsecond=0)
+    if mark > t:
+        mark -= _dt.timedelta(days=1)
+    return last_ok < mark.timestamp()
 
 
 # 装好之后**绝对不能被更新覆盖**的东西 —— 这些是"你的",不是"程序的"。
@@ -326,6 +340,27 @@ def stage_root(here: Path) -> Path:
     if bundle_of(here) is not None:
         return platform_id.config_dir() / "update"
     return Path(here) / "data" / "update"
+
+
+def stage_mac_bundle(raw: Path, staged: Path) -> Path:
+    """从 ditto 解出来的目录里找到新的 .app,**连名字一起**挪进 `staged/`,返回它的新位置。
+
+    原来是把 zip 里那唯一一层直接改名成 `staged` —— Windows 那边那一层是个
+    普通文件夹,改名无所谓;macOS 那边那一层就是 `NEU Helper.app` 本身,
+    改完名 `.app` 后缀没了,接下来按后缀找 bundle 就永远找不到:Mac 打包版的
+    一键更新因此每次都停在「下载的包里没有 NEU Helper.app」。
+
+    按深度取最浅的那个 —— bundle 里面可能还嵌着别的 .app。
+    """
+    apps = sorted((q for q in Path(raw).rglob("*.app")
+                   if q.is_dir() and "__MACOSX" not in q.parts),
+                  key=lambda q: len(q.parts))
+    if not apps:
+        raise RuntimeError("下载的包里没有 NEU Helper.app —— 不敢装")
+    staged.mkdir(parents=True, exist_ok=True)
+    dst = staged / apps[0].name
+    shutil.move(str(apps[0]), str(dst))
+    return dst
 
 
 def where_problem(here: Path) -> str:
@@ -706,17 +741,9 @@ class Updater:
             else:
                 with zipfile.ZipFile(zp) as z:
                     z.extractall(raw)
-            roots = [q for q in raw.iterdir() if q.is_dir()]
-            src = roots[0] if len(roots) == 1 else raw
-            shutil.move(str(src), str(staged))
 
             if app is not None:
-                # 解出来的那个就是 .app 本体(zip 里一层 NEU Helper.app)
-                staged_app = staged if staged.suffix == ".app" else None
-                if staged_app is None:
-                    staged_app = next((q for q in staged.rglob("*.app")), None)
-                if staged_app is None:
-                    raise RuntimeError("下载的包里没有 NEU Helper.app —— 不敢装")
+                staged_app = stage_mac_bundle(raw, staged)
                 exe = staged_app / "Contents" / "MacOS" / "NEU Helper"
                 if not exe.is_file():
                     raise RuntimeError(".app 里没有可执行文件 —— 不敢装")
@@ -725,6 +752,9 @@ class Updater:
                 _run_quiet(["chmod", "+x", str(exe)])
                 target = str(app)
             else:
+                roots = [q for q in raw.iterdir() if q.is_dir()]
+                src = roots[0] if len(roots) == 1 else raw
+                shutil.move(str(src), str(staged))
                 exe = staged / "NEU Helper.exe"
                 if not exe.is_file():
                     raise RuntimeError("下载的包里没有 NEU Helper.exe —— 不敢装")
@@ -822,12 +852,18 @@ def apply_update(target: Path, wait_pid: int) -> int:
     target = Path(target)
     staged = Path(sys.executable).resolve().parent
     mac_app = target if target.suffix == ".app" else None
+    # 旧进程的暂存目录 —— 必须和它自己 `stage_root(here)` 算出来的是同一个,
+    # 握手文件写在那儿旧进程才等得到。**不能拿新可执行文件往上数一层**:
+    # Windows 上那一层正好是暂存目录,macOS 上却是新 bundle 的 Contents/,
+    # 旧进程等满 15 秒就当新版起不来。
+    work = stage_root(mac_app / "Contents" / "MacOS" if mac_app is not None
+                      else target)
 
     # 日志往哪儿写。macOS 上 data/ 在 bundle 里面,而 bundle 整个要被换掉 ——
     # 所以几头都写一份:暂存区那份总在,旧 bundle 那份留着(万一换失败),
     # 新 bundle 那份换完就是现场。
     if mac_app is not None:
-        logs = [staged.parent / "update.log",
+        logs = [work / "update.log",
                 mac_app / "Contents" / "MacOS" / "data" / "update.log",
                 staged / "data" / "update.log"]
     else:
@@ -841,8 +877,8 @@ def apply_update(target: Path, wait_pid: int) -> int:
     # 起不来(被拦了、包坏了)的话它就不退,用户至少还有个能用的应用和
     # 一句解释,而不是"点了更新,应用没了"。
     try:
-        (staged.parent / STARTED).write_text(
-            time.strftime("%H:%M:%S"), encoding="utf-8")
+        work.mkdir(parents=True, exist_ok=True)
+        (work / STARTED).write_text(time.strftime("%H:%M:%S"), encoding="utf-8")
     except OSError:
         pass
 

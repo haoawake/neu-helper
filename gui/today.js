@@ -121,6 +121,9 @@
     $('todayRefresh').textContent = t('refresh'); renderSources(data.sources || {});
     const counts = data.counts || {};
     $('todaySummary').textContent = `${data.date} · ${t('overdue')} ${counts.overdue || 0} · ${t('today')} ${counts.today || 0} · ${t('unscheduled')} ${counts.unscheduled || 0}`;
+    // Nav badge: open items that are overdue or due today, same basis as the summary line.
+    const due = (counts.overdue || 0) + (counts.today || 0);
+    $('todayBadge').textContent = String(due); $('todayBadge').hidden = due <= 0;
     const list = $('todayItems'); list.replaceChildren();
     if (!data.items.length) list.append(node('p', 'muted', t('empty')));
     ['overdue','today','unscheduled','upcoming','info','snoozed','handled'].forEach(group => {

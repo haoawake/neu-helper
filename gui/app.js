@@ -15,6 +15,9 @@ const state = {
   showDone: false,
   streaming: false,
   activeAssignment: null,
+  sheetSeq: 0,         // 作业详情每开/关一次 +1,晚到的响应据此认出自己过期了
+  trans: {},           // 作业说明的译文,键是 `课程id:作业id`
+  transOn: new Set(),  // 哪些作业正在看译文(重画卡片时照着画)
   bubble: null,        // 当前正在追加增量的那个气泡
   bubbleRaw: '',       // 该气泡累积的 markdown 原文
   tab: 'brief',        // 'brief' | 'chat'
@@ -30,7 +33,7 @@ const state = {
   weekEdit: null,      // 正在改的那一条(null = 在加新的)
   weekTick: 0,         // 「现在」那条线的定时器
   sched: null,         // 课表解析的进度
-  page: 'study',       // 子页面:study | mail
+  page: 'study',       // 子页面:today | study | mail | week
   mail: null,          // 邮件拉取状态
   mailMsgs: [],        // 收件箱
   mailAccount: '',     // 列表按账号过滤
@@ -966,12 +969,19 @@ async function openAssignment(item) {
   $('sheetTitle').textContent = item.title.trim();
   $('sheetMeta').textContent = '';
   $('sheetBody').textContent = '读取中…';
+  $('btnSheetTrans').hidden = true;
   $('sheetBackdrop').hidden = false;
 
-  const d = await apiGet('/api/assignment/' + item.course_id + '/' + Number(m[1]));
+  const seq = ++state.sheetSeq;
+  const aid = Number(m[1]);
+  const d = await apiGet('/api/assignment/' + item.course_id + '/' + aid);
+  // 读的这会儿面板已经关了、或者换成了另一个作业:别把这份填进去
+  if (seq !== state.sheetSeq) return;
   if (d.error) { $('sheetBody').textContent = `读取失败:${d.error}`; return; }
 
-  state.activeAssignment = { ...d, course_short: item.course_short };
+  state.activeAssignment = {
+    ...d, course_short: item.course_short, course_id: item.course_id, assignment_id: aid,
+  };
 
   const meta = $('sheetMeta');
   meta.textContent = '';
@@ -982,12 +992,75 @@ async function openAssignment(item) {
     d.state === 'unsubmitted' ? '未提交' : d.state,
   ].forEach((t) => meta.appendChild(el('span', 'chip', t)));
 
-  $('sheetBody').textContent = d.description || '(这个作业没写描述,要求可能在附件或课件里)';
+  const tk = transKey(item.course_id, aid);
+  $('sheetBody').textContent = (state.transOn.has(tk) && state.trans[tk])
+    || d.description || '(这个作业没写描述,要求可能在附件或课件里)';
+  const tb = $('btnSheetTrans');
+  tb.hidden = !d.description || state.prefs.lang === 'en';
+  tb.disabled = false;
+  transLabel(tb, tk);
 }
 
 function closeSheet() {
   $('sheetBackdrop').hidden = true;
   state.activeAssignment = null;
+  state.sheetSeq++;
+  resumeUpdSheet();
+}
+
+/* ─────────────────────────── 作业说明翻译 ───────────────────────────
+   只在中文界面出现 —— 英文界面下原文本来就是看得懂的那份。
+   **译文存在 state 里,不挂在 DOM 上**:课程页换标签、同步完重画的时候卡片
+   是整张重建的,DOM 上的译文会被冲掉;重画时照 state.transOn 把正在看译文的
+   那几张直接画成译文。后端按原文哈希缓存,同一段第二次点是秒回。 */
+
+function transKey(courseId, assignmentId) {
+  return `${courseId}:${assignmentId}`;
+}
+
+async function fetchTranslation(courseId, assignmentId) {
+  const key = transKey(courseId, assignmentId);
+  if (!state.trans[key]) {
+    const d = await apiPost(`/api/translate/assignment/${courseId}/${assignmentId}`);
+    if (!d.ok) throw new Error(d.error || '翻译失败');
+    state.trans[key] = d.text;
+  }
+  return state.trans[key];
+}
+
+function transLabel(btn, key) {
+  btn.textContent = state.transOn.has(key) ? '显示原文' : '翻译';
+  btn.title = '';
+}
+
+/* 点一下:没在看译文就去取(取过的直接用),在看译文就切回原文。
+   show(text) 把文字画进内容框;alive() 说的是这颗按钮对应的内容还在不在
+   屏幕上 —— 等模型那十几秒里面板可能关了、卡片可能被重画了,那时译文只进
+   缓存,不往已经不在的地方画(再点一下就是秒回)。 */
+async function toggleTranslation(btn, courseId, assignmentId, show, original, alive) {
+  const key = transKey(courseId, assignmentId);
+  if (state.transOn.has(key)) {
+    state.transOn.delete(key);
+    show(original);
+    transLabel(btn, key);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '翻译中…';
+  try {
+    const text = await fetchTranslation(courseId, assignmentId);
+    if (!alive()) return;
+    state.transOn.add(key);
+    show(text);
+    transLabel(btn, key);
+  } catch (e) {
+    if (!alive()) return;
+    btn.textContent = '重试翻译';
+    btn.title = e.message;       // 提示条一闪就没,原因留在悬停里
+    hint(`翻译失败:${e.message}`);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ─────────────────────────── 对话 ─────────────────────────── */
@@ -1545,9 +1618,11 @@ function renderCourseHomework(box, d) {
     });
     card.appendChild(meta);
 
+    const tk = transKey(d.id, a.id);
+    let req = null;
     if (a.brief) {
-      const req = el('div', 'hw-brief');
-      renderMarkdown(a.brief, req);
+      req = el('div', 'hw-brief');
+      renderMarkdown((state.transOn.has(tk) && state.trans[tk]) || a.brief, req);
       card.appendChild(req);
     }
     if (a.attachments && a.attachments.length) {
@@ -1558,6 +1633,19 @@ function renderCourseHomework(box, d) {
     }
 
     const foot = el('div', 'hw-foot');
+    // 卡片上那段只是 600 字的摘要;译文是后端按 id 取全文翻的,所以切到译文
+    // 以后框里的字会比原文多 —— 框本身能滚
+    if (req && state.prefs.lang !== 'en') {
+      const tr = el('button', 'link-btn');
+      tr.type = 'button';
+      transLabel(tr, tk);
+      tr.addEventListener('click', () => {
+        if (tr.disabled) return;
+        toggleTranslation(tr, d.id, a.id, (text) => renderMarkdown(text, req),
+          a.brief, () => tr.isConnected);
+      });
+      foot.appendChild(tr);
+    }
     const ask = el('button', 'link-btn', '问 Claude');
     ask.type = 'button';
     ask.addEventListener('click', () => {
@@ -2179,6 +2267,7 @@ function renderWfMails(mails) {
 function closeWkSheet() {
   $('weekSheet').hidden = true;
   state.weekEdit = null;
+  resumeUpdSheet();
 }
 
 async function wkSend(body) {
@@ -2331,8 +2420,10 @@ function wireWeek() {
    所以课业简报在生成的时候你还能问邮件的事,互不打断。 */
 
 function setPage(page) {
-  state.page = ['mail', 'week'].includes(page) ? page : 'study';
+  state.page = ['today', 'mail', 'week'].includes(page) ? page : 'study';
   document.body.dataset.page = state.page;
+  // 今日清单自己 15 秒刷一次,切进来的时候不等那一拍
+  if (state.page === 'today') window.dispatchEvent(new Event('today-data-changed'));
   // 日程页:#weekView 上那个 hidden 留着不动 —— 别处有好几处拿
   // `!$('weekView').hidden` 当"现在看得见吗"用(定时重画、改了偏好要不要
   // 重渲染),去掉它那些判断就全失效了
@@ -3181,6 +3272,7 @@ function renderUpdate(info, job) {
   else if (!state.updJob) state.updJob = {};
   const i = state.upd;
   const j = state.updJob;
+  renderUpdSheetJob(j);
   const bar = $('updBar');
   const txt = $('updText');
   if (!bar) return;
@@ -3320,9 +3412,30 @@ function maybeUpdSheet(info) {
   // 正在更新/正在重启的时候别拦路
   const ph = (state.updJob || {}).phase;
   if (ph && ph !== 'idle' && ph !== 'error') return;
-  if (!$('prefsBackdrop').hidden || !$('sheetBackdrop').hidden) return;
+  // 设置、作业详情、课表编辑开着的时候不叠上去 —— 先记下,那几个一关就补上。
+  // 原来是直接放弃,而"看过"又没记,于是要等到第二天 09:00 那次检查才会再弹
+  if (!$('prefsBackdrop').hidden || !$('sheetBackdrop').hidden || !$('weekSheet').hidden) {
+    state.updSheetLater = i;
+    return;
+  }
+  state.updSheetLater = null;
   savePrefs({ updSheetSeen: latest });
   openUpdSheet(i);
+}
+
+/* 被别的浮层挡下来的那次更新提示:浮层一关就补上 */
+function resumeUpdSheet() {
+  const i = state.updSheetLater;
+  state.updSheetLater = null;
+  if (i) maybeUpdSheet(i);
+}
+
+/* 这种装法点不了一键更新:没有 .git 的源码版、这一版没有本平台的包(比如
+   Intel Mac)。对话框里直接给下载页,别让人点完「立刻更新」才看到一句报错。
+   代码已经换新、只差重启的那种(stale_process)不算 —— 那个一点就是重启 */
+function updNeedsManual(i) {
+  if (i.stale_process) return false;
+  return state.updKind === 'source' || (state.updKind === 'packaged' && !i.asset);
 }
 
 function openUpdSheet(i) {
@@ -3337,8 +3450,12 @@ function openUpdSheet(i) {
   // 原来这两句在 window.confirm 里。对话框接管了那次确认,话也得跟着搬过来 ——
   // 「有多大、会不会动我的东西」是点「立刻更新」之前唯一要知道的事
   const mb = Math.round((i.size || 0) / 1048576);
-  $('updSheetMeta').appendChild(el('div', 'muted',
-    (state.updKind === 'git'
+  const manual = updNeedsManual(i);
+  $('updSheetMeta').appendChild(el('div', 'muted', manual
+    ? (state.updKind === 'source'
+      ? '这份是没有 .git 的源码,不能一键更新 —— 去下载页拿新版。'
+      : '这一版没有本平台的安装包,不能一键更新 —— 去下载页看看。')
+    : (state.updKind === 'git'
       ? '取最新代码、快进、自动重启。'
       : `下载并替换当前版本${mb ? `(约 ${mb} MB)` : ''},装好自动重启。`)
     + '你的邮件、对话、课件、设置都不动。'));
@@ -3351,14 +3468,66 @@ function openUpdSheet(i) {
   hist.forEach((h) => {
     box.appendChild(el('div', 'upd-note-h', `v${h.version}`
       + (h.date ? ` · ${h.date}` : '')));
-    box.appendChild(el('div', 'upd-note-b',
-      (h.notes || '').trim() || '(这一版没写说明)'));
+    // Release 说明是 markdown,和横幅上「改了什么」一样渲染 —— 当纯文本塞进去的话,
+    // 「## 更新内容」那几个井号就直接露在脸上
+    const body = el('div', 'upd-note-b is-md');
+    renderMarkdown((h.notes || '').trim() || '(这一版没写说明)', body);
+    box.appendChild(body);
   });
+  state.updSheetBusy = false;
+  updSheetButtons(true);
+  $('btnUpdSheetGo').textContent = manual ? '打开下载页' : '立刻更新';
+  $('updSheetState').textContent = '';
   $('updSheet').hidden = false;
 }
 
 function closeUpdSheet() {
   $('updSheet').hidden = true;
+  // 更新还在跑的话照样跑,进度回到学业页顶上那条横幅里
+  state.updSheetBusy = false;
+}
+
+function updSheetButtons(on) {
+  ['btnUpdSheetGo', 'btnUpdSheetLater', 'btnUpdSheetSkip'].forEach((id) => {
+    $(id).disabled = !on;
+  });
+}
+
+/* 「立刻更新」:对话框**不关**,就地变成进度。原来是点完就关、进度画在学业页
+   顶上那条横幅里 —— 人停在别的页、或者窗口收成了对话框,点完就什么都看不见,
+   直到窗口消失又冒出来;失败的话连这个都没有。 */
+function startSheetUpdate() {
+  state.updSheetBusy = true;
+  state.updJob = {};
+  updSheetButtons(false);
+  $('btnUpdSheetGo').textContent = '正在更新…';
+  $('updSheetState').textContent = '正在开始…';
+  // 和横幅上那个「更新并重启」同一条路。true = 这个对话框本身就是那次确认
+  applyUpdate(true);
+}
+
+/* 更新进度推进对话框。只管从对话框点起来的那次,而且对话框还开着 */
+function renderUpdSheetJob(j, err) {
+  if (!state.updSheetBusy || $('updSheet').hidden) return;
+  const box = $('updSheetState');
+  const failed = err || (j.phase === 'error' && j.error);
+  if (failed) {
+    state.updSheetBusy = false;
+    updSheetButtons(true);
+    $('btnUpdSheetGo').textContent = '重试';
+    box.textContent = '更新没成功:' + failed;
+    return;
+  }
+  if (j.phase === 'done') {
+    // 源码版快进完发现本来就是最新的
+    closeUpdSheet();
+    hint(j.msg || '已经是最新的');
+    return;
+  }
+  if (j.phase && j.phase !== 'idle') {
+    box.textContent = (j.msg || '正在更新…')
+      + (j.phase === 'downloading' && j.pct ? ` ${j.pct}%` : '');
+  }
 }
 
 /* 「跳过这个版本」记在 prefs 里,重开还算数。源码版的提交数每次 fetch
@@ -3473,10 +3642,14 @@ async function checkUpdate() {
     state.updDismissed = '';
     // 手点了检查 = 他现在就想知道,把之前跳过的那个版本解开
     if (state.prefs.skipVersion) savePrefs({ skipVersion: '' });
-    renderUpdate(d.info || {}, {});
-    if (!(d.info || {}).ok && (d.info || {}).error) {
-      setUpdState('查不到:' + d.info.error);
+    const info = d.info || {};
+    // 查失败时回来的是这一次的错误(见后端 api_update_check)。**别拿它去
+    // renderUpdate** —— 那会把之前查到的「有新版本」冲掉,横幅跟着消失
+    if (!info.ok && info.error) {
+      setUpdState('查不到:' + info.error);
+      return;
     }
+    renderUpdate(info, {});
   } catch (e) {
     setUpdState('查不到:' + ((e && e.message) || e));
   }
@@ -3502,10 +3675,14 @@ async function applyUpdate(confirmed) {
 async function runUpdate() {
   try {
     const r = await apiPost('/api/update/apply', {});
-    if (!r.ok && r.error) setUpdState(r.error);
+    if (!r.ok && r.error) {
+      setUpdState(r.error);
+      renderUpdSheetJob({}, r.error);
+    }
     renderUpdate(state.upd, r.job || {});
   } catch (e) {
     setUpdState('没跑起来:' + ((e && e.message) || e));
+    renderUpdSheetJob({}, '没跑起来:' + ((e && e.message) || e));
   }
 }
 
@@ -5497,6 +5674,7 @@ const PREF_FALLBACK = {
   focusCourses: '', prefsTab: 'general',
   mailFacts: [], mailTags: [], mailAiOn: true, mailModel: 'sonnet',
   schedModel: 'sonnet', schedFull: false, schedMemos: true, schedMail: true,
+  transModel: 'haiku',
   mailMarkRead: true,
   mailSort: 'date_desc',
 };
@@ -5551,6 +5729,7 @@ function closePrefs() {
   state.lazyFlush.forEach((f) => f());
   factCommits.forEach((f) => f());
   $('prefsBackdrop').hidden = true;
+  resumeUpdSheet();
 }
 
 /* 开机自启的开关。**每次都现问后端**,不缓存在 prefs 里 —— 这件事的真相在
@@ -5623,6 +5802,7 @@ function syncPrefsUI() {
   setSwitch('swTopmost', p.topmost !== false);
   setSwitch('swSync', p.autoSync !== false);
   $('selSchedModel').value = p.schedModel || 'sonnet';
+  $('selTransModel').value = p.transModel || 'haiku';
   setSwitch('swSchedMemos', p.schedMemos !== false);
   setSwitch('swSchedMail', p.schedMail !== false);
   if ($('schedPrefState')) {
@@ -6179,6 +6359,9 @@ function wirePrefs() {
   $('selSchedModel').addEventListener('change', (e) => {
     savePrefs({ schedModel: e.target.value });
   });
+  $('selTransModel').addEventListener('change', (e) => {
+    savePrefs({ transModel: e.target.value });
+  });
   // 备忘录进不进格子是纯显示问题,不用重新解析,原地重画就行
   toggle('swSchedMemos', 'schedMemos', () => {
     if (!$('weekView').hidden) renderWeek();
@@ -6406,9 +6589,13 @@ function wireEvents() {
   $('btnUpdSheetX').addEventListener('click', closeUpdSheet);
   $('btnUpdSheetLater').addEventListener('click', closeUpdSheet);
   $('btnUpdSheetGo').addEventListener('click', () => {
-    closeUpdSheet();
-    // 和横幅上那个「更新并重启」同一条路。true = 这个对话框本身就是那次确认
-    applyUpdate(true);
+    const i = state.upd || {};
+    if (updNeedsManual(i)) {
+      if (i.page) openExternal(i.page);
+      closeUpdSheet();
+      return;
+    }
+    startSheetUpdate();
   });
   $('btnUpdSheetSkip').addEventListener('click', () => {
     const v = (state.upd || {}).latest;
@@ -6450,6 +6637,15 @@ function wireEvents() {
     const a = state.activeAssignment;
     if (a) openExternal(a.url);
   });
+
+  $('btnSheetTrans').addEventListener('click', () => {
+    const a = state.activeAssignment;
+    const btn = $('btnSheetTrans');
+    if (!a || btn.disabled) return;
+    toggleTranslation(btn, a.course_id, a.assignment_id,
+      (text) => { $('sheetBody').textContent = text; },
+      a.description, () => state.activeAssignment === a);
+  });
 }
 
 async function boot() {
@@ -6465,7 +6661,7 @@ async function boot() {
   if (!['orb', 'chat', 'full'].includes(start)) start = 'full';
   await loadDashboard(false);
   // 有没有新版本。**只读后端存着的那份结果,不触发联网** ——
-  // 真正去问 GitHub 是后台每 6 小时一次的事
+  // 真正去问 GitHub 是后台的事:启动时一次,之后每天 09:00
   loadUpdate();
   // 安装完整吗(要跑一次 claude mcp list,慢一点,所以放在后面)
   loadSetup();

@@ -25,6 +25,11 @@
   <!-- 子页面切换。刻意放在拖拽区外面:拖拽绑在 .drag-region 上,
        放里面的按钮会变成"一按就拖窗口" -->
   <div class="seg page-seg" id="pageSeg" role="tablist" aria-label="子页面">
+    <!-- 今日清单:Canvas / 邮件 / 备忘录 / 日程里今天该动手的事。原来挂在学业页
+         最上面,现在单独一页 —— 学业页的最前面留给「距离下一个截止」 -->
+    <button class="seg-btn" data-v="today" role="tab">
+      今日清单<span class="page-badge" id="todayBadge" hidden></span>
+    </button>
     <button class="seg-btn is-on" data-v="study" role="tab">学业</button>
     <button class="seg-btn" data-v="mail" role="tab">
       邮箱<span class="page-badge" id="mailBadge" hidden></span>
@@ -65,6 +70,22 @@
 </header>
 
 <div class="stage">
+<!-- ═══════════ 今日清单(顶层页)═══════════
+     一整屏、单栏,清单居中限宽。显隐由 body[data-page] 的 CSS 管,**不要**加
+     hidden 属性(理由见邮箱页那段)。里面的内容全由 today.js 按 id 画 -->
+<main class="layout layout-today" id="layoutToday">
+  <section class="pane pane-data" id="paneToday">
+    <section id="todayPanel" class="today-panel" aria-label="今日行动清单">
+      <div class="block-head"><h2 id="todayTitle">今日行动清单</h2><button class="link-btn" id="todayRefresh">同步来源</button></div>
+      <p class="muted today-intro" id="todayIntro">先处理今天的事。所有操作仅影响本清单，不会提交作业或修改邮箱。</p>
+      <div id="todaySources" class="today-sources"></div>
+      <p id="todayError" role="status" hidden></p>
+      <div id="todaySummary" class="today-summary" aria-live="polite">正在读取行动清单…</div>
+      <div id="todayItems"></div>
+    </section>
+  </section>
+</main>
+
 <main class="layout layout-main">
 
   <!-- ─────────────── 左栏:数据 ─────────────── -->
@@ -101,14 +122,6 @@
          —— 落后三个版本的人该看到这三版加起来改了什么。点「改了什么」展开 -->
     <div id="updNotes" class="upd-notes" hidden></div>
     <div id="banner" class="banner" hidden></div>
-    <section id="todayPanel" class="today-panel" aria-label="今日行动清单">
-      <div class="block-head"><h2 id="todayTitle">今日行动清单</h2><button class="link-btn" id="todayRefresh">同步来源</button></div>
-      <p class="muted today-intro" id="todayIntro">先处理今天的事。所有操作仅影响本清单，不会提交作业或修改邮箱。</p>
-      <div id="todaySources" class="today-sources"></div>
-      <p id="todayError" role="status" hidden></p>
-      <div id="todaySummary" class="today-summary" aria-live="polite">正在读取行动清单…</div>
-      <div id="todayItems"></div>
-    </section>
     <div id="overdueAlert" class="alert" hidden></div>
 
     <!-- 唯一的 hero 数字:距离下一个截止还有多久 -->
@@ -456,6 +469,8 @@
     <div class="sheet-body" id="sheetBody"></div>
     <div class="sheet-foot">
       <button class="btn" id="btnSheetAsk">问 Claude 这个作业</button>
+      <!-- 只在中文界面、而且作业写了描述的时候出现(openAssignment 里判) -->
+      <button class="btn btn-quiet" id="btnSheetTrans" hidden>翻译</button>
       <button class="btn btn-quiet" id="btnSheetOpen">在 Canvas 打开</button>
     </div>
   </div>
@@ -475,6 +490,8 @@
     </div>
     <div class="sheet-meta" id="updSheetMeta"></div>
     <div class="sheet-body" id="updSheetBody"></div>
+    <!-- 点了「立刻更新」之后对话框不关,进度和报错就写在这一行 -->
+    <div class="upd-sheet-state" id="updSheetState" role="status" aria-live="polite"></div>
     <div class="sheet-foot">
       <button class="btn" id="btnUpdSheetGo">立刻更新</button>
       <button class="btn btn-quiet" id="btnUpdSheetLater">稍后手动更新</button>
@@ -696,7 +713,7 @@
           <h4>版本</h4>
           <div class="pref-row">
             <label class="pref-label" for="swUpdateCheck"
-                   title="每 6 小时问一次 GitHub 有没有新版本。会把你的 IP 告诉 GitHub">自动检查更新</label>
+                   title="启动时和每天 09:00 问一次 GitHub 有没有新版本。会把你的 IP 告诉 GitHub">自动检查更新</label>
             <button class="switch" id="swUpdateCheck" role="switch" aria-checked="true">
               <span class="switch-dot"></span>
             </button>
@@ -837,6 +854,19 @@
             <button class="btn btn-quiet link-danger" id="btnSchedReset"
                     title="连手改和手加的一起清掉">清空课表</button>
             <span class="muted" id="schedPrefState"></span>
+          </div>
+        </section>
+
+        <section class="pref-group">
+          <h4>作业翻译</h4>
+          <p class="pref-hint">中文界面下,作业卡片和作业详情里有个「翻译」按钮,把英文的作业说明翻成中文。只在点的时候跑一次模型,翻过的存在本地,再点不花钱;老师改了说明会重翻。</p>
+          <div class="pref-row">
+            <label class="pref-label" for="selTransModel">用哪个模型</label>
+            <select id="selTransModel" class="select">
+              <option value="haiku">haiku(便宜)</option>
+              <option value="sonnet">sonnet(均衡)</option>
+              <option value="opus">opus(最准)</option>
+            </select>
           </div>
         </section>
       </div>

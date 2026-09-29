@@ -60,6 +60,7 @@ import mailpeople
 import memos
 import today
 import timetable as tt
+import translate
 import applang
 import orb_render
 import toast as toastmod
@@ -177,6 +178,8 @@ class Backend:
                                 on_done=lambda s: self._chat_done(s))
         self.dismissed = DismissStore(HERE / "data" / "dismissed.json")
         self.memos = memos.MemoStore(HERE / "data" / "memos.json")
+        # 作业说明的中文译文。只在点「翻译」时调模型,按原文哈希缓存
+        self.translator = translate.Translator(HERE / "data" / "translations.json")
         self.briefing_store = BriefingStore(HERE / "data" / "briefings.json")
         self.brief_session = ChatSession(
             HERE,
@@ -944,7 +947,7 @@ class Backend:
         if not force and not prefs.get("updateCheck", True):
             return {}
         info = updater.check()
-        # **源码版还要看一眼 origin。** check() 问的是 releases/latest,
+        # **源码版还要看一眼 origin。** check() 问的是 Release 列表,
         # 而源码版的更新根本不经过 Release —— 代码一推上 main 就能快进拿到。
         # 不看的话,推上去的修复对源码版用户同样是静默的
         if updater.install_kind(HERE) == "git":
@@ -984,7 +987,7 @@ class Backend:
         """有新版本就在右下角报一句。三道闸,缺一不可:
 
           · **只对发了 Release 的版本报。** 源码版的新提交交给横幅 ——
-            为几个提交每 6 小时弹一次窗是骚扰
+            为几个提交天天弹一次窗是骚扰
           · 一个版本只报一次(_told_version 在内存里:重启算一次新的提醒
             时机,而横幅一直挂着,想更新随时点得到)
           · 点过「跳过这个版本」的,那个版本再也不提
@@ -1020,7 +1023,7 @@ class Backend:
                     body, go="update", force=True)
 
     def start_update_watch(self) -> None:
-        """启动时查一次,之后每天 09:00 查一次。
+        """启动时查一次,之后每天 09:00 查一次;查失败的话 30 分钟后再试。
 
         原来是"启动 + 每 6 小时"。改成钉在每天固定一个点上,理由有两条:
 
@@ -1031,16 +1034,25 @@ class Backend:
           用处(未认证请求每小时 60 次的额度也是共用的)
 
         启动那次留 20 秒 —— 让窗口、悬浮球、本地服务先起来,别和它们抢。
+        之后每分钟看一次钟,该不该查由 updater.check_due 判断(为什么不一口气
+        睡到 09:00、为什么查失败要重试,见那个函数)。
         """
         def loop():
             time.sleep(20)
+            last_ok = last_try = 0.0
             while True:
-                try:
-                    self.check_update()
-                except Exception as exc:           # noqa: BLE001
-                    print(f"[update] {type(exc).__name__}: {exc}",
-                          file=sys.stderr, flush=True)
-                time.sleep(updater.until_daily(updater.DAILY_HOUR))
+                now = time.time()
+                if updater.check_due(now, last_ok, last_try):
+                    last_try = now
+                    try:
+                        info = self.check_update()
+                        # {} = 设置里关了自动检查。不算失败,不然每半小时空转一次
+                        if info.get("ok") or not info:
+                            last_ok = now
+                    except Exception as exc:       # noqa: BLE001
+                        print(f"[update] {type(exc).__name__}: {exc}",
+                              file=sys.stderr, flush=True)
+                time.sleep(60)
         threading.Thread(target=loop, daemon=True, name="updatewatch").start()
 
     def notify(self, title: str, body: str, go: str = "",
@@ -1469,6 +1481,25 @@ class Backend:
             "url": a.get("html_url"),
         }
 
+    def translate_assignment(self, course_id: int, assignment_id: int) -> dict:
+        """作业说明翻成中文。
+
+        **原文由这里按 id 重新取,不收前端传来的文字**:课程页卡片上那段只是
+        600 字的摘要,翻它等于翻半截;作业详情那份才是全文(6000 字上限)。
+        """
+        d = self.assignment(course_id, assignment_id)
+        if d.get("error"):
+            return {"ok": False, "error": d["error"]}
+        text = (d.get("description") or "").strip()
+        if not text:
+            return {"ok": False, "error": "这个作业没写描述"}
+        model = read_prefs().get("transModel") or "haiku"
+        try:
+            out, cached = self.translator.translate(text, model)
+        except Exception as exc:                   # noqa: BLE001
+            return {"ok": False, "error": str(exc) or type(exc).__name__}
+        return {"ok": True, "text": out, "cached": cached}
+
     # ------------------------------------------------------------ 邮件日程
 
     def mail_event_list(self) -> list[dict]:
@@ -1730,6 +1761,13 @@ def api_today_action():
 @app.get("/api/assignment/<int:course_id>/<int:assignment_id>")
 def api_assignment(course_id: int, assignment_id: int):
     return jsonify(backend.assignment(course_id, assignment_id))
+
+
+# 同步调用:没翻过的要等模型(几秒到几十秒),翻过的直接从缓存回。
+# 服务是 threaded=True 起的,这一条阻塞不影响别的请求
+@app.post("/api/translate/assignment/<int:course_id>/<int:assignment_id>")
+def api_translate_assignment(course_id: int, assignment_id: int):
+    return jsonify(backend.translate_assignment(course_id, assignment_id))
 
 
 # ─────────────────────────── 课表 ───────────────────────────
@@ -2068,7 +2106,7 @@ _prefs_lock = threading.Lock()
 # 设置面板里能调的每一项都在这儿有个默认值。前端拿到的永远是「默认值 + 存档」
 # 合并后的完整对象,所以前端不用到处写 fallback。
 DEFAULT_PREFS = {
-    # 每 6 小时问一次 GitHub 有没有新版本。**默认开**,但能关 ——
+    # 启动时和每天 09:00 问一次 GitHub 有没有新版本。**默认开**,但能关 ——
     # 这个请求会把你的 IP 告诉 GitHub,有人不想要
     "updateCheck": True,
     # 有新版本时右下角报一句。**和 toastOn 分开** —— 不想被"新邮件"打扰
@@ -2149,6 +2187,8 @@ DEFAULT_PREFS = {
     "schedFull": False,      # 纵轴画满 0–24,还是只画有内容的时段
     "schedMemos": True,      # 备忘录里的每周/某天条目也画进格子
     "schedMail": True,       # 邮件里抽出来的日程也画进格子
+    # ── 作业翻译(只在中文界面出现那个按钮)
+    "transModel": "haiku",   # 点了就等着看的交互,默认用快的那个
 }
 PREF_KEYS = set(DEFAULT_PREFS)
 
@@ -2266,9 +2306,14 @@ def api_update_get():
 
 @app.post("/api/update/check")
 def api_update_check():
-    """现在去问一次 GitHub。"""
-    backend.check_update(force=True)
-    return jsonify({"ok": True, "info": backend.update_info,
+    """现在去问一次 GitHub。
+
+    **回的是这一次的结果,不是存着的那份。** 存着的那份只在查成功时才更新 ——
+    原来回的是它,于是查失败的时候界面拿到的是上一次成功的结果(或者空的),
+    「查不到:…」那句永远出不来,看上去就像"已经是最新"。
+    """
+    info = backend.check_update(force=True)
+    return jsonify({"ok": True, "info": info,
                     "version": appver.VERSION,
                     "kind": updater.install_kind(HERE)})
 
@@ -3124,7 +3169,7 @@ def api_mail_index():
 def api_mail_seen_all():
     """一键已读:把**现在这个箱子里**所有未读的信标成已读。
 
-    两层都要动:服务器上的 `\Seen`,和本地索引。顺序是先服务器再本地 ——
+    两层都要动:服务器上的 `\\Seen`,和本地索引。顺序是先服务器再本地 ——
     反过来的话服务器写失败就成了"界面说已读、邮箱里还是未读"。
 
     按账号分组批量发 STORE(见 mailbox.imap_set_seen_many):一次登录一条

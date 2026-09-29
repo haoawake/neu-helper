@@ -1616,6 +1616,21 @@ a.md-link {
 .upd-jump { font-size: 15px; font-weight: 650; }
 .upd-jump .to { color: var(--accent-ink); }
 #updSheetBody { max-height: 46vh; overflow: auto; }
+.upd-sheet-state {
+  padding: 10px 18px 0;
+  border-top: 1px solid var(--hairline);
+  font-size: 12.5px; line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.upd-sheet-state:empty { display: none; }
+.upd-note-b.is-md { white-space: normal; }
+.upd-note-b .md-h { font-size: 12.5px; margin: 10px 0 4px; }
+.upd-note-b .md-h:first-child { margin-top: 0; }
+/* 更新进行中另外两个按钮点了也没用,得看得出来 */
+#updSheet .btn:disabled, #updSheet .link-btn:disabled { opacity: .5; cursor: default; }
+/* 有进度行的时候,脚那一栏的分隔线由进度行代劳 */
+.upd-sheet-state:not(:empty) + .sheet-foot { border-top: none; }
 .upd-note-h {
   margin: 12px 0 4px; font-size: 12px; font-weight: 650;
   color: var(--text-muted); letter-spacing: .04em;
@@ -2212,6 +2227,21 @@ body:not([data-page="week"]) .layout-week { display: none !important; }
 body[data-mode="chat"] .page-seg .seg-btn[data-v="week"] { display: none; }
 body[data-mode="chat"][data-page="week"] .layout-week { display: none !important; }
 body[data-mode="chat"][data-page="week"] .layout-main { display: grid; }
+/* 今日清单是第四屏,和日程一样一整屏、不分左右栏。清单居中限宽 ——
+   一张卡片就是一行标题加一排按钮,拉满整个窗口宽反而难扫 */
+body[data-page="today"] .layout:not(.layout-today) { display: none; }
+body:not([data-page="today"]) .layout-today { display: none !important; }
+/* rows 也得写:窄窗口那条 @media 把 .layout 排成上下两行,单栏页会只剩半截高 */
+.layout-today {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.layout-today .today-panel { width: 100%; max-width: 880px; margin: 0 auto; }
+/* 对话框形态下同样退回主屏(对话),理由和日程页那段一样:这个形态把
+   .pane-data 整个藏起来了,而这一页除了它什么都没有 */
+body[data-mode="chat"] .page-seg .seg-btn[data-v="today"] { display: none; }
+body[data-mode="chat"][data-page="today"] .layout-today { display: none !important; }
+body[data-mode="chat"][data-page="today"] .layout-main { display: grid; }
 /* 收成对话框的时候邮箱页也只留右栏 */
 body[data-mode="chat"] #paneMail { display: none; }
 body[data-mode="chat"] .layout-mail {

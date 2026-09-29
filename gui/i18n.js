@@ -345,6 +345,7 @@ const FRAGS = [
 
 const EN = {
   /* 顶栏 / 窗口 */
+  '今日清单': 'Today',
   '学业': 'Study',
   '邮箱': 'Mail',
   '日程': 'Schedule',
@@ -525,8 +526,8 @@ const EN = {
   '有新版本时弹一条': 'Pop a card for new versions',
   '补全安装': 'Repair the install',
   '现在检查': 'Check now',
-  '每 6 小时问一次 GitHub 有没有新版本。会把你的 IP 告诉 GitHub':
-    'Asks GitHub every 6 hours. That tells GitHub your IP',
+  '启动时和每天 09:00 问一次 GitHub 有没有新版本。会把你的 IP 告诉 GitHub':
+    'Asks GitHub at startup and every day at 09:00. That tells GitHub your IP',
   '有新版本时右下角报一句。和「信息弹窗」那个开关分开 —— 不想被新邮件打扰,不等于不想知道有更新':
     'A card in the corner for new versions. Separate from the notification switch: not wanting mail popups is not the same as not wanting updates',
 
@@ -578,6 +579,11 @@ const EN = {
     'Dated things from your mail (interviews, talks, deadlines) go on the grid too. Day-only ones sit in the all-day strip',
   '备忘录里「每周」和「某一天」那两种,按 30 分钟的块画进格子':
     'The weekly and on-a-day memos, drawn as 30-minute blocks',
+
+  /* 设置 · 作业翻译 */
+  '作业翻译': 'Assignment translation',
+  '中文界面下,作业卡片和作业详情里有个「翻译」按钮,把英文的作业说明翻成中文。只在点的时候跑一次模型,翻过的存在本地,再点不花钱;老师改了说明会重翻。':
+    'In the Chinese interface, assignment cards and the assignment sheet have a Translate button that turns the English description into Chinese. The model runs only when you click; translations are kept on this computer, so a second click costs nothing, and an edited description is translated again.',
   '连手改和手加的一起清掉': 'Wipes your edits and hand-added entries too',
 
   /* 设置 · 我的情况 / AI 过目 */
@@ -737,6 +743,10 @@ const EN = {
   '无期限': 'No due date',
   '附件': 'Attachments',
   '问 Claude': 'Ask Claude',
+  '翻译': 'Translate',
+  '翻译中…': 'Translating…',
+  '显示原文': 'Show original',
+  '重试翻译': 'Retry translation',
   '作业文件夹': 'Assignment folder',
   '打开这个作业在本地的目录': 'Open this assignment folder on this computer',
   '这门课没有课件,或者老师没开放文件区 / 模块。':
@@ -1012,6 +1022,12 @@ const EN = {
   '立刻更新': 'Update now',
   '稍后手动更新': 'Later, I will do it myself',
   '跳过这个版本': 'Skip this version',
+  '打开下载页': 'Open the download page',
+  '正在开始…': 'Starting...',
+  '这份是没有 .git 的源码,不能一键更新 —— 去下载页拿新版。':
+    'This is a source copy without .git, so it cannot update itself. Get the new version from the download page.',
+  '这一版没有本平台的安装包,不能一键更新 —— 去下载页看看。':
+    'This release has no package for this platform, so it cannot update itself. Check the download page.',
   '(这一版没写说明)': '(no notes for this version)',
   '取最新代码、快进、自动重启。你的邮件、对话、课件、设置都不动。':
     'Fetch the latest code, fast-forward, restart automatically. Your mail, '

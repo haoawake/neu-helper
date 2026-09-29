@@ -38,6 +38,7 @@ def script():
       state.prefs = {lang: new URLSearchParams(location.search).get('lang') || 'zh'};
       document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'light';
       wireEvents(); switchTab('memo'); loadMemos();
+      setPage(new URLSearchParams(location.search).get('page') || 'today');
       $('appbarMeta').textContent = '离线演示 · 合成数据';
       return;
     ''')
@@ -46,7 +47,7 @@ def script():
 def fixture(name):
     if name == 'memos': return jsonify(items=memo_items,pending=1)
     if name == 'clientlog': print('BROWSER ERROR',request.get_json(),flush=True)
-    if name == 'prefs': return jsonify(lang='zh',page='study',mode='full')
+    if name == 'prefs': return jsonify(lang='zh',page='today',mode='full')
     if name == 'mail/one': return jsonify(message={'id':'notice','subject':'图书馆开放时间调整','snippet':'演示邮件','from':'Library','rank':{'level':2},'files':[]})
     if name == 'schedule': return jsonify(items=[],allday=[],courses=[],state={},notes=[],parsed=[])
     return jsonify({})
